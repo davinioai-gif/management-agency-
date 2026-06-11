@@ -360,5 +360,26 @@ class TestBotController(unittest.TestCase):
         args, _ = self.controller.whatsapp.send_message.call_args
         self.assertIn("https://calendly.com/bhmanagement/fotostudio-huren-480", args[1])
 
+    @patch('urllib.request.urlopen')
+    def test_n8n_handover_webhook(self, mock_urlopen):
+        """
+        Verify that send_n8n_handover_webhook successfully makes a POST request to n8n.
+        """
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+        
+        # Test direct call to notifier
+        success = NotificationHandler.send_n8n_handover_webhook("Test User", "+12345", "test message")
+        self.assertTrue(success)
+        mock_urlopen.assert_called_once()
+        
+        # Test controller triggering handover calls the notifier webhook method
+        self.controller.notifier = MagicMock()
+        self.controller._trigger_handover(self.mock_conv_doc, ["website"])
+        self.controller.notifier.send_n8n_handover_webhook.assert_called_once_with(
+            "AJ", "+31648689297", "Client AJ (+31648689297) requested manual handover for services: website."
+        )
+
 if __name__ == '__main__':
     unittest.main()

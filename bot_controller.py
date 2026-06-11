@@ -307,7 +307,12 @@ class BotController:
             f"Beerthuizen Management Chatbot Engine"
         )
         self.notifier.send_email_notification(subject, body)
-        logger.info(f"Handover triggered for {phone} to Emirhan")
+        
+        # Trigger n8n webhook notification
+        webhook_msg = f"Client {name} ({phone}) requested manual handover for services: {', '.join(services_selected)}."
+        self.notifier.send_n8n_handover_webhook(name, phone, webhook_msg)
+        
+        logger.info(f"Handover triggered for {phone} to Emirhan and n8n webhook")
 
     def _handle_qualification_chat(self, conv: dict, message_text: str):
         """
