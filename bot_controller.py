@@ -18,6 +18,71 @@ MENU_OPTIONS = {
     "6": "events"
 }
 
+MESSAGES = {
+    "Dutch": {
+        "menu_text": (
+            "Hallo! Welkom bij Beerthuizen Management. Waar ben je in geïnteresseerd?\n\n"
+            "1. Podcast opnemen\n"
+            "2. Fotostudio huren\n"
+            "3. Website laten maken\n"
+            "4. Online advertenties\n"
+            "5. Influencer campagnes & creator matching\n"
+            "6. Evenementen / launches / brand trips\n\n"
+            "Stuur het nummer van je keuze."
+        ),
+        "transfer_text": (
+            "Bedankt voor de informatie. Ik zet je door naar een medewerker.\n"
+            "We reageren meestal binnen 10 minuten."
+        ),
+        "intro_text": "Hi, je spreekt met {persona}. Bedankt voor je interesse in {service_label}. Waar kan ik je mee helpen?",
+        "retry_text": (
+            "Sorry, we hebben je keuze niet goed begrepen. "
+            "Stuur a.u.b. het nummer (1 t/m 6) van de service waarin je geïnteresseerd bent."
+        ),
+        "closing_question": "Duidelijk, ik heb zo alle informatie genoteerd. Heb je zelf nog vragen voor mij?",
+        "closing_retry": "Helder. Als er verder geen vragen zijn, stuur ik je de boekingslink door.",
+        "services": {
+            "podcast": "Podcast opnemen",
+            "photostudio": "Fotostudio huren",
+            "website": "Website laten maken",
+            "ads": "Online advertenties",
+            "influencer": "Influencer campagnes & creator matching",
+            "events": "Evenementen / launches / brand trips"
+        }
+    },
+    "English": {
+        "menu_text": (
+            "Hello! Welcome to Beerthuizen Management. What are you interested in?\n\n"
+            "1. Record a podcast\n"
+            "2. Rent a photo studio\n"
+            "3. Have a website made\n"
+            "4. Online advertisements\n"
+            "5. Influencer campaigns & creator matching\n"
+            "6. Events / launches / brand trips\n\n"
+            "Send the number of your choice."
+        ),
+        "transfer_text": (
+            "Thank you for the information. I am transferring you to a team member.\n"
+            "We usually respond within 10 minutes."
+        ),
+        "intro_text": "Hi, you are speaking with {persona}. Thanks for your interest in {service_label}. How can I help you?",
+        "retry_text": (
+            "Sorry, we did not understand your choice. "
+            "Please send the number (1 to 6) of the service you are interested in."
+        ),
+        "closing_question": "Clear, I have noted down all the information. Do you have any questions for me?",
+        "closing_retry": "Clear. If there are no further questions, I will send you the booking link.",
+        "services": {
+            "podcast": "Record a podcast",
+            "photostudio": "Rent a photo studio",
+            "website": "Have a website made",
+            "ads": "Online advertisements",
+            "influencer": "Influencer campaigns & creator matching",
+            "events": "Events / launches / brand trips"
+        }
+    }
+}
+
 class BotController:
     def __init__(self):
         self.db = MongoHandler()
@@ -32,6 +97,20 @@ class BotController:
         """
         # 1. Fetch or create conversation
         conv = self.db.get_or_create_conversation(phone, name, chat_id)
+        
+        # Detect/set initial language if not set yet
+        lang = conv.get("language")
+        if not lang:
+            dutch_words = ["ik", "wil", "huren", "opnemen", "ja", "nee", "geen", "fotoshoot", "maken", "evenement", "laten", "de", "het", "een", "en", "van", "voor", "je", "u", "we", "hallo"]
+            text_lower = message_text.lower()
+            dutch_count = sum(1 for word in dutch_words if f" {word} " in f" {text_lower} " or text_lower.startswith(word) or text_lower.endswith(word))
+            if dutch_count > 0:
+                lang = "Dutch"
+            else:
+                lang = "English"
+            self.db.update_conversation(phone, {"language": lang})
+            conv["language"] = lang
+            
         persona = conv["assigned_persona"]
         state = conv["state"]
         
@@ -69,16 +148,8 @@ class BotController:
         """
         Sends the standard welcome menu.
         """
-        menu_text = (
-            "Hallo! Welkom bij Beerthuizen Management. Waar ben je in geïnteresseerd?\n\n"
-            "1. Podcast opnemen\n"
-            "2. Fotostudio huren\n"
-            "3. Website laten maken\n"
-            "4. Online advertenties\n"
-            "5. Influencer campagnes & creator matching\n"
-            "6. Evenementen / launches / brand trips\n\n"
-            "Stuur het nummer van je keuze."
-        )
+        lang = conv.get("language", "Dutch")
+        menu_text = MESSAGES[lang]["menu_text"]
         phone = conv["phone"]
         chat_id = conv["chat_id"]
         
@@ -169,10 +240,8 @@ class BotController:
                     self._transfer_to_persona(conv, primary_service)
             else:
                 # Invalid selection retry
-                retry_text = (
-                    "Sorry, we hebben je keuze niet goed begrepen. "
-                    "Stuur a.u.b. het nummer (1 t/m 6) van de service waarin je geïnteresseerd bent."
-                )
+                lang = conv.get("language", "Dutch")
+                retry_text = MESSAGES[lang]["retry_text"]
                 self.whatsapp.send_message(chat_id, retry_text)
                 self.db.save_message(phone, "assistant", retry_text)
 
@@ -183,20 +252,19 @@ class BotController:
         phone = conv["phone"]
         chat_id = conv["chat_id"]
         persona = conv["assigned_persona"]
+        lang = conv.get("language", "Dutch")
         
         # 1. 10min Handoff message
-        transfer_text = (
-            "Bedankt voor de informatie. Ik zet je door naar een medewerker.\n"
-            "We reageren meestal binnen 10 minuten."
-        )
+        transfer_text = MESSAGES[lang]["transfer_text"]
         self.whatsapp.send_message(chat_id, transfer_text)
         self.db.save_message(phone, "assistant", transfer_text)
         
         # 2. Wait 5 seconds to simulate transfer (non-blocking async sleep)
         async def delayed_intro():
             await asyncio.sleep(5)
-            service_label = SERVICES.get(service, service)
-            intro_text = f"Hi, je spreekt met {persona}. Bedankt voor je interesse in {service_label}. Waar kan ik je mee helpen?"
+            service_label = MESSAGES[lang]["services"].get(service, service)
+            intro_template = MESSAGES[lang]["intro_text"]
+            intro_text = intro_template.format(persona=persona, service_label=service_label)
             self.whatsapp.send_message(chat_id, intro_text)
             self.db.save_message(phone, "assistant", intro_text)
             self.db.update_conversation(phone, {"state": "QUALIFYING"})
@@ -213,10 +281,8 @@ class BotController:
         name = conv["name"]
         
         # Send handover message
-        handoff_text = (
-            "Bedankt voor de informatie. Ik zet je door naar een medewerker.\n"
-            "We reageren meestal binnen 10 minuten."
-        )
+        lang = conv.get("language", "Dutch")
+        handoff_text = MESSAGES[lang]["transfer_text"]
         self.whatsapp.send_message(chat_id, handoff_text)
         self.db.save_message(phone, "assistant", handoff_text)
         
@@ -330,22 +396,9 @@ class BotController:
                 completed.append(current_service)
                 self.db.update_conversation(phone, {"completed_services": completed})
             
-            # Check if there are other selected services that are not yet qualified
-            remaining_services = [s for s in selected_services if s not in completed and s not in ["website", "ads"]]
-            
-            if remaining_services:
-                # Switch current_service to next service and continue qualifying
-                next_service = remaining_services[0]
-                self.db.update_conversation(phone, {"current_service": next_service})
-                logger.info(f"Switching qualification current_service to: {next_service}")
-                # Update conv ref and re-run analysis
-                updated_conv = self.db.get_conversation(phone)
-                self._handle_qualification_chat(updated_conv, message_text)
-                return
-            else:
-                # ALL qualifications completed! Proceed to closing question / link delivery (BUG #1 Fix)
-                self._handle_closing_and_delivery(updated_conv, ai_output, message_text)
-                return
+            # Proceed to closing question / link delivery (BUG #1 Fix)
+            self._handle_closing_and_delivery(updated_conv, ai_output, message_text)
+            return
 
         # Send regular qualification reply
         self.whatsapp.send_message(chat_id, reply)
@@ -379,59 +432,73 @@ class BotController:
         """
         phone = conv["phone"]
         chat_id = conv["chat_id"]
-        asked_closing = conv.get("asked_closing_question", False)
         user_had_no_more_questions = ai_output.get("user_had_no_more_questions", False)
-        
-        # BUG #1 Fix: If qualification is complete, ask the closing question first
-        if not asked_closing:
-            # Trigger AI to ask the closing question: "Heb je nog vragen voor mij?"
-            closing_reply = "Duidelijk, ik heb zo alle informatie genoteerd. Heb je zelf nog vragen voor mij?"
-            self.whatsapp.send_message(chat_id, closing_reply)
-            self.db.save_message(phone, "assistant", closing_reply)
-            self.db.update_conversation(phone, {"asked_closing_question": True})
-            logger.info(f"Closing question asked for user {phone}")
-            return
             
         # If closing question was already asked:
-        # Check if user responded they have no questions (BUG #4 negative answer check applied by AI)
         lower_msg = message_text.lower()
-        no_questions_keywords = ["nee", "geen", "geen vragen", "no", "no questions", "niks", "niet"]
+        no_questions_keywords = ["nee", "geen", "geen vragen", "no", "no questions", "niks", "niet", "none"]
         
         if user_had_no_more_questions or any(kw in lower_msg for kw in no_questions_keywords):
-            # Deliver booking links (BUG #2 Contextual Link Fix)
-            self._send_qualified_booking_links(conv)
+            # Deliver booking links
+            current_service = conv.get("current_service")
+            self._send_qualified_booking_links(conv, current_service)
         else:
             # The client asked some follow up question. Send AI response
-            reply = ai_output.get("reply", "Helder. Als er verder geen vragen zijn, stuur ik je de boekingslink door.")
+            lang = conv.get("language", "Dutch")
+            reply = ai_output.get("reply", MESSAGES[lang]["closing_retry"])
             self.whatsapp.send_message(chat_id, reply)
             self.db.save_message(phone, "assistant", reply)
 
-    def _send_qualified_booking_links(self, conv: dict):
+    def _send_qualified_booking_links(self, conv: dict, service: str = None):
         """
-        Sends booking links wrapped in professional explanation templates (BUG #2 Fix).
+        Sends booking links wrapped in professional explanation templates.
         """
         phone = conv["phone"]
         chat_id = conv["chat_id"]
-        selected_services = conv.get("selected_services", [])
+        lang = conv.get("language", "Dutch")
+        
+        if not service:
+            selected_services = conv.get("selected_services", [])
+            curr = conv.get("current_service")
+            if curr in selected_services:
+                service = curr
+            else:
+                service = selected_services[0] if selected_services else "photostudio"
+            
+        # 1. Generate the dynamic 1-sentence summary of the user's booking details using AI
+        all_answers = conv.get("answers", {})
+        summary = self.ai.generate_qualification_summary([service], all_answers, lang)
         
         # Determine photostudio link dynamically
         photo_link = CALENDLY_PHOTO_URL
         photo_is_standard = True
         
-        if "photostudio" in selected_services:
-            photo_answers = conv.get("answers", {}).get("photostudio", {})
+        if service == "photostudio":
+            photo_answers = all_answers.get("photostudio", {})
+            photographer = str(photo_answers.get("photographer") or photo_answers.get("photo_photographer") or "").lower()
             extras = str(photo_answers.get("extras") or photo_answers.get("photo_extras") or "").lower()
             duration = str(photo_answers.get("duration") or photo_answers.get("photo_duration") or "").lower()
             
             negatives = ["nee", "no", "geen", "niet", "none", "skip", "not needed", "niet nodig", "n.v.t", "nvt"]
-            if extras and extras not in negatives:
-                has_prof = any(prof in extras for prof in ["fotograaf", "photographer", "stylist", "makeup", "visagie", "creative", "licht", "verlichting", "achtergrond", "setting", "custom", "maatwerk"])
-                has_neg = any(neg in extras for neg in negatives)
-                if has_neg and not has_prof:
-                    photo_is_standard = True
-                else:
-                    photo_is_standard = False
+            
+            # Photographer check
+            need_photographer = False
+            if photographer:
+                if any(word in photographer for word in ["own", "alleen", "zelf", "self", "alone"]):
+                    need_photographer = False
+                elif any(word in photographer for word in ["photographer", "fotograaf", "yes", "ja"]):
+                    need_photographer = True
+                elif photographer not in negatives:
+                    need_photographer = True
                     
+            # Extras check
+            need_extras = False
+            if extras and extras not in negatives:
+                need_extras = True
+                
+            if need_photographer or need_extras:
+                photo_is_standard = False
+                
             detected_duration = None
             if "2" in duration and "20" not in duration and "24" not in duration:
                 detected_duration = 2
@@ -453,76 +520,83 @@ class BotController:
             else:
                 photo_link = CALENDLY_INTAKE_URL
 
-        # Decide which link to deliver based on selected services
-        links_sent = []
-        explanation_intro = "Helder, dank voor de uitleg! We hebben alle informatie genoteerd.\n\n"
+        # Format final messages following the strict template:
+        # - summary
+        # - thank you message
+        # - link
         
-        if "podcast" in selected_services and "photostudio" in selected_services:
+        links_sent = []
+        if service == "photostudio":
             if photo_is_standard:
-                explanation = (
-                    f"{explanation_intro}"
-                    f"Je kunt via onderstaande links direct jouw podcastopname en fotostudio boeken. "
-                    f"Kies een geschikt moment. Na de betaling is je boeking definitief:\n\n"
-                    f"🎙️ **Podcast Studio Boeking:** {CALENDLY_PODCAST_URL}\n"
-                    f"📸 **Fotostudio Boeking:** {photo_link}\n\n"
-                    f"We kijken ernaar uit om samen te werken!"
-                )
-                links_sent = [CALENDLY_PODCAST_URL, photo_link]
-            else:
-                explanation = (
-                    f"{explanation_intro}"
-                    f"Voor de podcast kun je direct boeken via de onderstaande link:\n"
-                    f"🎙️ **Podcast Studio Boeking:** {CALENDLY_PODCAST_URL}\n\n"
-                    f"Omdat je voor de fotostudio specifieke wensen of extra professionals/faciliteiten nodig hebt, "
-                    f"willen we dit graag persoonlijk afstemmen. Plan daarvoor een korte intake call via deze link:\n"
-                    f"📞 **Intake Call:** {CALENDLY_INTAKE_URL}\n\n"
-                    f"We spreken je snel!"
-                )
-                links_sent = [CALENDLY_PODCAST_URL, CALENDLY_INTAKE_URL]
-                
-        elif "podcast" in selected_services:
-            explanation = (
-                f"{explanation_intro}"
-                f"Het lijkt me goed om de podcastopname in te plannen. Via de onderstaande link kun je direct een tijdslot kiezen "
-                f"en je gewenste pakket (Starter/Creator/Series) boeken:\n\n"
-                f"🎙️ **Boek hier:** {CALENDLY_PODCAST_URL}\n\n"
-                f"Na het boeken ontvang je direct een bevestiging via e-mail!"
-            )
-            links_sent = [CALENDLY_PODCAST_URL]
-            
-        elif "photostudio" in selected_services:
-            if photo_is_standard:
-                explanation = (
-                    f"{explanation_intro}"
-                    f"Je kunt direct een tijdslot voor de fotostudio reserveren in Blaricum. Via de onderstaande link selecteer je "
-                    f"je gewenste datum en tijd:\n\n"
-                    f"📸 **Boek hier:** {photo_link}\n\n"
-                    f"Tot snel in de studio!"
-                )
+                if lang == "Dutch":
+                    explanation = (
+                        f"{summary}\n\n"
+                        f"Bedankt voor uw antwoorden. U kunt direct een tijdslot voor de fotostudio reserveren via onderstaande link:\n\n"
+                        f"{photo_link}"
+                    )
+                else:
+                    explanation = (
+                        f"{summary}\n\n"
+                        f"Thank you for your answers. You can book a time slot directly via the link below:\n\n"
+                        f"{photo_link}"
+                    )
                 links_sent = [photo_link]
             else:
+                # Custom intake meeting
+                if lang == "Dutch":
+                    explanation = (
+                        f"{summary}\n\n"
+                        f"Bedankt voor uw antwoorden. We kunnen alle details verder bespreken tijdens een intakegesprek.\n"
+                        f"U kunt via deze link een tijdslot boeken.\n"
+                        f"We kijken ernaar uit om meer te horen over uw visie en deze tot leven te brengen.\n\n"
+                        f"{CALENDLY_INTAKE_URL}"
+                    )
+                else:
+                    explanation = (
+                        f"{summary}\n\n"
+                        f"Thank you for your answers. We can discuss all the details further during an intake meeting.\n"
+                        f"You can book a time slot via this link.\n"
+                        f"We look forward to hearing more about your vision and bringing it to life.\n\n"
+                        f"{CALENDLY_INTAKE_URL}"
+                    )
+                links_sent = [CALENDLY_INTAKE_URL]
+        elif service == "podcast":
+            if lang == "Dutch":
                 explanation = (
-                    "Bedankt voor uw antwoorden. We kunnen alle details verder bespreken tijdens een intakegesprek.\n"
-                    "U kunt via deze link een tijdslot boeken.\n"
-                    "We kijken ernaar uit om meer te horen over uw visie en deze tot leven te brengen.\n\n"
+                    f"{summary}\n\n"
+                    f"Bedankt voor uw antwoorden. U kunt direct een tijdslot boeken via onderstaande link:\n\n"
+                    f"{CALENDLY_PODCAST_URL}"
+                )
+            else:
+                explanation = (
+                    f"{summary}\n\n"
+                    f"Thank you for your answers. You can book a time slot directly via the link below:\n\n"
+                    f"{CALENDLY_PODCAST_URL}"
+                )
+            links_sent = [CALENDLY_PODCAST_URL]
+        else:
+            # Events / Influencer / fallback to custom intake call
+            if lang == "Dutch":
+                explanation = (
+                    f"{summary}\n\n"
+                    f"Bedankt voor uw antwoorden. We kunnen alle details verder bespreken tijdens een intakegesprek.\n"
+                    f"U kunt via deze link een tijdslot boeken.\n"
+                    f"We kijken ernaar uit om meer te horen over uw visie en deze tot leven te brengen.\n\n"
                     f"{CALENDLY_INTAKE_URL}"
                 )
-                links_sent = [CALENDLY_INTAKE_URL]
-                
-        else:
-            # For Events / Influencer: send Intake call link (never direct booking)
-            explanation = (
-                "Bedankt voor uw antwoorden. We kunnen alle details verder bespreken tijdens een intakegesprek.\n"
-                "U kunt via deze link een tijdslot boeken.\n"
-                "We kijken ernaar uit om meer te horen over uw visie en deze tot leven te brengen.\n\n"
-                f"{CALENDLY_INTAKE_URL}"
-            )
+            else:
+                explanation = (
+                    f"{summary}\n\n"
+                    f"Thank you for your answers. We can discuss all the details further during an intake meeting.\n"
+                    f"You can book a time slot via this link.\n"
+                    f"We look forward to hearing more about your vision and bringing it to life.\n\n"
+                    f"{CALENDLY_INTAKE_URL}"
+                )
             links_sent = [CALENDLY_INTAKE_URL]
 
         self.whatsapp.send_message(chat_id, explanation)
         self.db.save_message(phone, "assistant", explanation)
         
-        # Mark conversation as completed
         self.db.update_conversation(phone, {
             "state": "COMPLETED",
             "booking_links_delivered": links_sent
@@ -535,23 +609,36 @@ class BotController:
         """
         phone = conv["phone"]
         chat_id = conv["chat_id"]
+        lang = conv.get("language", "Dutch")
         
         if service == "podcast":
             link = CALENDLY_PODCAST_URL
-            explanation = (
-                f"Als ik het goed begrijp wil je direct een boeking maken voor de podcaststudio. "
-                f"Dat kan heel makkelijk via onderstaande link:\n\n"
-                f"🎙️ **Podcast Studio Boeking:** {link}\n\n"
-                f"Kies je pakket en gewenste datum en rond de betaling direct online af!"
-            )
+            if lang == "Dutch":
+                explanation = (
+                    f"Als ik het goed begrijp wil je direct een boeking maken voor de podcaststudio. "
+                    f"Dat kan heel makkelijk via onderstaande link:\n\n"
+                    f"{link}"
+                )
+            else:
+                explanation = (
+                    f"If I understand correctly, you want to book the podcast studio directly. "
+                    f"You can do so easily via the link below:\n\n"
+                    f"{link}"
+                )
         else:
             link = CALENDLY_PHOTO_URL
-            explanation = (
-                f"Als ik het goed begrijp wil je direct de fotostudio in Blaricum boeken. "
-                f"Dat kan heel makkelijk via onderstaande link:\n\n"
-                f"📸 **Fotostudio Boeking:** {link}\n\n"
-                f"Kies de gewenste uren en opties om je reservering compleet te maken!"
-            )
+            if lang == "Dutch":
+                explanation = (
+                    f"Als ik het goed begrijp wil je direct de fotostudio in Blaricum boeken. "
+                    f"Dat kan heel makkelijk via onderstaande link:\n\n"
+                    f"{link}"
+                )
+            else:
+                explanation = (
+                    f"If I understand correctly, you want to book the photo studio in Blaricum directly. "
+                    f"You can do so easily via the link below:\n\n"
+                    f"{link}"
+                )
 
         self.whatsapp.send_message(chat_id, explanation)
         self.db.save_message(phone, "assistant", explanation)

@@ -84,7 +84,8 @@ class TestBotController(unittest.TestCase):
                 "media": "video+audio",
                 "date": "next month",
                 "editing": "yes",
-                "experience": "first time"
+                "experience": "first time",
+                "questions": "no"
             }
         }
         is_complete = self.controller._is_service_qualification_complete(self.mock_conv_doc, "podcast")
@@ -96,6 +97,7 @@ class TestBotController(unittest.TestCase):
         """
         self.controller.whatsapp.send_message = MagicMock()
         self.mock_conv_doc["selected_services"] = ["podcast"]
+        self.mock_conv_doc["language"] = "Dutch"
         
         self.controller._send_qualified_booking_links(self.mock_conv_doc)
         
@@ -103,9 +105,8 @@ class TestBotController(unittest.TestCase):
         args, _ = self.controller.whatsapp.send_message.call_args
         sent_text = args[1]
         
-        self.assertIn("podcastopname in te plannen", sent_text)
+        self.assertIn("Bedankt voor uw antwoorden", sent_text)
         self.assertIn("https://calendly.com/bhmanagement/podcast-opnemen", sent_text)
-        self.assertIn("bevestiging via e-mail", sent_text)
 
     def test_bug4_negative_answer_skip(self):
         """
@@ -317,6 +318,28 @@ class TestBotController(unittest.TestCase):
             }
         )
         self.controller._transfer_to_persona.assert_called_once()
+
+    def test_language_persistence(self):
+        """
+        Verify that language is initially detected (Dutch vs English) and locked.
+        """
+        self.controller._transfer_to_persona = MagicMock()
+        
+        # Case A: Dutch keywords
+        self.controller.db.get_or_create_conversation = MagicMock(return_value={"assigned_persona": "Suzanne", "state": "NEW", "phone": "+31648689297", "chat_id": "chat_id_123", "name": "AJ"})
+        self.controller.db.get_conversation = MagicMock(return_value={"assigned_persona": "Suzanne", "state": "NEW", "phone": "+31648689297", "chat_id": "chat_id_123", "name": "AJ", "language": "Dutch"})
+        self.controller.db.update_conversation = MagicMock()
+        
+        self.controller.process_incoming_message("+31648689297", "AJ", "chat_id_123", "ik wil graag een fotoshoot boeken")
+        self.controller.db.update_conversation.assert_any_call("+31648689297", {"language": "Dutch"})
+        
+        # Case B: English input
+        self.controller.db.update_conversation.reset_mock()
+        self.controller.db.get_or_create_conversation = MagicMock(return_value={"assigned_persona": "Suzanne", "state": "NEW", "phone": "+31648689297", "chat_id": "chat_id_123", "name": "AJ"})
+        self.controller.db.get_conversation = MagicMock(return_value={"assigned_persona": "Suzanne", "state": "NEW", "phone": "+31648689297", "chat_id": "chat_id_123", "name": "AJ", "language": "English"})
+        
+        self.controller.process_incoming_message("+31648689297", "AJ", "chat_id_123", "I want to book a photo shoot please")
+        self.controller.db.update_conversation.assert_any_call("+31648689297", {"language": "English"})
 
 if __name__ == '__main__':
     unittest.main()

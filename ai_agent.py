@@ -25,15 +25,17 @@ QUALIFICATION_QUESTIONS = {
         {"key": "podcast_media", "text": "Willen jullie opnemen met video + audio, of alleen audio?"},
         {"key": "podcast_date", "text": "Hebben jullie al een datum of periode in gedachten voor de opname?"},
         {"key": "podcast_editing", "text": "Hebben jullie ook interesse in montage of korte clips voor social media, of alleen de opname?"},
-        {"key": "podcast_experience", "text": "Hebben jullie al ervaring met podcasts opnemen, of wordt dit de eerste keer?"}
+        {"key": "podcast_experience", "text": "Hebben jullie al ervaring met podcasts opnemen, of wordt dit de eerste keer?"},
+        {"key": "podcast_questions", "text": "Do you have any questions for me?"}
     ],
     "photostudio": [
-        {"key": "photo_type", "text": "Wat voor type fotoshoot willen jullie doen?"},
-        {"key": "photo_project", "text": "Voor welk merk, product of project is de shoot bedoeld?"},
-        {"key": "photo_people", "text": "Met hoeveel personen komen jullie naar de studio?"},
-        {"key": "photo_duration", "text": "Hoe lang willen jullie de studio gebruiken? 2 uur, 4 uur of een volledige dag?"},
-        {"key": "photo_date", "text": "Hebben jullie al een datum of periode in gedachten?"},
-        {"key": "photo_extras", "text": "Hebben jullie eventueel ook extra faciliteiten of professionals nodig, zoals extra studioverlichting, een fotograaf of stylist?"}
+        {"key": "photo_type", "text": "What kind of shoot is it? For example product shoot, portrait, content creation, fashion, branded content?"},
+        {"key": "photo_project", "text": "What brand, product, or project is the shoot for?"},
+        {"key": "photo_people", "text": "How many people will be present during the shoot?"},
+        {"key": "photo_duration", "text": "How long do you think you'll need the studio like Will it be for 2 hours, 4 hours, or 8 hours?"},
+        {"key": "photo_photographer", "text": "Will you need a photographer, or are you looking to rent the studio on its own?"},
+        {"key": "photo_extras", "text": "Would you like to include any additional services or add-ons? We offer options such as: Professional lighting setups, Backdrops, Props and styling, On-site assistance, Editing services?"},
+        {"key": "photo_questions", "text": "Do you have any questions for me?"}
     ],
     "influencer": [
         {"key": "infl_needs", "text": "Waar zijn jullie precies naar op zoek op het gebied van influencer marketing? (bijvoorbeeld een campagne, creators vinden of ondersteuning)"},
@@ -42,7 +44,8 @@ QUALIFICATION_QUESTIONS = {
         {"key": "infl_platforms", "text": "Op welke platformen willen jullie vooral inzetten?"},
         {"key": "infl_budget", "text": "Hebben jullie al een budgetindicatie voor de campagne?"},
         {"key": "infl_creator_type", "text": "Wat voor type creator zoeken jullie?"},
-        {"key": "infl_date", "text": "Wanneer willen jullie dat de campagne live gaat?"}
+        {"key": "infl_date", "text": "Wanneer willen jullie dat de campagne live gaat?"},
+        {"key": "infl_questions", "text": "Do you have any questions for me?"}
     ],
     "events": [
         {"key": "evt_type", "text": "Wat voor type event of brand trip willen jullie organiseren?"},
@@ -50,7 +53,8 @@ QUALIFICATION_QUESTIONS = {
         {"key": "evt_guests", "text": "Hoeveel gasten verwachten jullie?"},
         {"key": "evt_location", "text": "Denken jullie aan een locatie in Nederland of in het buitenland?"},
         {"key": "evt_budget", "text": "Hebben jullie al een budgetrange in gedachten?"},
-        {"key": "evt_date", "text": "Wanneer zou het event moeten plaatsvinden?"}
+        {"key": "evt_date", "text": "Wanneer zou het event moeten plaatsvinden?"},
+        {"key": "evt_questions", "text": "Do you have any questions for me?"}
     ]
 }
 
@@ -96,33 +100,53 @@ class AIAgent:
         current_service = conversation_state.get("current_service")
         selected_services = conversation_state.get("selected_services", [])
         answers = conversation_state.get("answers", {})
+        lang = conversation_state.get("language")
         
+        if lang:
+            lang_instruction = f"You MUST respond STRICTLY in {lang}. The conversation language has been locked to {lang}. Do not switch to any other language under any circumstances."
+        else:
+            lang_instruction = "Respond in the language used by the client (Dutch or English). Once you identify the user's language, specify it in 'detected_language'."
+
         faq_text = self._get_faq_text()
+        
+        active_questions_text = ""
+        if current_service and current_service in QUALIFICATION_QUESTIONS:
+            active_questions_text = "### QUALIFICATION QUESTIONS TO ASK (In this order):\n"
+            for i, q in enumerate(QUALIFICATION_QUESTIONS[current_service], 1):
+                active_questions_text += f"{i}. Key: '{q['key'].split('_')[-1]}' - Question: \"{q['text']}\"\n"
         
         prompt = f"""
 You are {persona}, a warm, professional, and friendly representative of Beerthuizen Management (a talent and marketing agency based in Blaricum, Netherlands). 
 You must conduct the conversation as if you are a real human team member chatting on WhatsApp. 
 
 ### BEHAVIOR RULES:
-1. LANGUAGE: Respond STRICTLY in the language used by the client. If they speak Dutch, reply in Dutch. If they speak English, reply in English. Check conversation history to verify language.
+1. LANGUAGE: {lang_instruction}
 2. TONE: Human-like, concise, natural. Keep replies short (1-3 sentences) suitable for WhatsApp. Never sound robotic or send long lists of questions.
 3. NO ROBOTIC FORMATTING: Never use the symbol " — " (dash separator) in your replies, as it makes the message look AI-generated.
 4. CONVERSATION FLOW:
-   - Always ask exactly ONE qualification question at a time.
-   - If the user has already provided an answer in their history, do NOT ask that question again.
-   - If the user says "no", "nee", "skip", "not needed", or "doesn't matter" to a question, consider it a valid answer. Do NOT repeat or press on that question.
-   - Check in between questions (e.g., "Is het zo duidelijk voor je? Anders leg ik het graag verder uit.") to keep the dialogue natural.
+   - You must strictly go through the list of qualification questions for the active service in the order they are defined.
+   - You must ask exactly ONE qualification question at a time.
+   - You can rephrase the question to sound natural, friendly, and human, but you MUST preserve the examples and meaning of the predefined questions.
+   - Do not skip any question unless the user has already explicitly answered it in the chat history. If an answer is missing from 'Current answers logged', you MUST ask that question.
+   - The final question you ask must be the 'questions' key ("Do you have any questions for me?").
 5. PRICES:
    - Do NOT mention pricing unless the user asks.
    - For Website, Ads, Events, and Influencer services: NEVER share exact prices. Explain in a human way that prices depend on customization, and steer towards scheduling an intake call.
    - For Podcast studio and Photo studio: You CAN communicate the standard packages and prices if the client asks. Refer to the FAQs in knowledge base.
 6. NO PLACEHOLDERS: Always provide actual answers based on the knowledge base. If you do not know the answer to a specific question, politely state you will note it down for a team member to answer, and notify internally. Do not make up information.
-7. CLOSING QUESTION: The question "Do you have any questions for me?" (Dutch: "Heb je nog vragen voor mij?") must ONLY be asked at the very end when the qualification is complete. Never ask it in the middle of qualification.
+7. CLOSING QUESTION: The final qualification question for every service is the 'questions' key ("Do you have any questions for me?"). You must ONLY ask this question at the very end when all other questions have been answered. Never ask it in the middle of qualification.
+
+### KB & FAQ ANSWERING RULE:
+- If the user asks ANY question about Beerthuizen Management, our services, locations, prices, or policies:
+  1. You must answer their question clearly using the KNOWLEDGE BASE & FAQS first.
+  2. You MUST set "asking_question_key" to null in your JSON response and do NOT ask any qualification question in the same reply. Just answer their question, be helpful, and keep the tone conversational. You will resume qualification in the next turn.
 
 ### CONVERSATION STATE:
 - Active Services: {selected_services}
 - Currently Qualifying: {current_service}
 - Current answers logged: {json.dumps(answers)}
+
+{active_questions_text}
 
 ### KNOWLEDGE BASE & FAQS:
 {faq_text}
@@ -133,23 +157,25 @@ You must return your output strictly in JSON format matching this schema:
   "detected_intents": ["podcast", "photostudio", "website", "ads", "influencer", "events"], // Any services mentioned or selected by the user. If they select or want multiple, add them all.
   "extracted_answers": {{
       // Map the extracted answers under the active service key using ONLY the subkeys of the qualification questions (the part after the underscore):
-      // For "photostudio": "type", "project", "people", "duration", "date", "extras"
-      // For "podcast": "format", "type", "people", "media", "date", "editing", "experience"
-      // For "influencer": "needs", "project", "goal", "platforms", "budget", "creator_type", "date"
-      // For "events": "type", "goal", "guests", "date", "exposure", "budget"
+      // For "photostudio": "type", "project", "people", "duration", "photographer", "extras", "questions"
+      // For "podcast": "format", "type", "people", "media", "date", "editing", "experience", "questions"
+      // For "influencer": "needs", "project", "goal", "platforms", "budget", "creator_type", "date", "questions"
+      // For "events": "type", "goal", "guests", "location", "budget", "date", "questions"
       "photostudio": {{
           "type": "productfotografie",
           "duration": "4 uur",
           "people": "4",
-          "date": "15 juni",
+          "photographer": "yes",
           "project": "Waffle",
-          "extras": "nee"
+          "extras": "nee",
+          "questions": "no"
       }}
   }},
   "is_negative_response": false, // Set to true if the user's response was a rejection/skip/refusal of the current question.
   "user_had_no_more_questions": false, // Set to true ONLY if you asked the closing question ("any more questions?") and the user said "no" / "geen vragen".
   "reply": "Your response to the user here. Keep it human-like, short, and natural.",
-  "asking_question_key": "the_key_of_the_question_you_are_asking_from_the_list" // e.g. "photo_date" or null if you are not asking a qualification question.
+  "asking_question_key": "the_key_of_the_question_you_are_asking_from_the_list", // e.g. "photo_duration" or null if you are not asking a qualification question.
+  "detected_language": "Dutch" // "Dutch" or "English".
 }}
 """
         return prompt
@@ -183,8 +209,41 @@ You must return your output strictly in JSON format matching this schema:
                 "is_negative_response": False,
                 "user_had_no_more_questions": False,
                 "reply": "Sorry, ik kon je bericht niet verwerken. Kun je dat nogmaals sturen?",
-                "asking_question_key": None
+                "asking_question_key": None,
+                "detected_language": conversation.get("language", "Dutch")
             }
+
+    def generate_qualification_summary(self, selected_services: list, answers: dict, language: str) -> str:
+        """
+        Generates a 1-sentence summary of the qualification answers in the target language.
+        """
+        prompt = f"""
+You are a warm, professional booking assistant. Write a one-sentence summary of the client's booking details based on their qualification answers.
+Maintain a warm, polite and professional tone.
+The summary MUST be written in {language}.
+
+Answers logged:
+{json.dumps(answers)}
+
+Write ONLY the one-sentence summary. Do not add any greeting, intro or extra text.
+Examples in Dutch:
+- "U plant een productshoot van 4 uur in Amsterdam voor uw merk Pearl (Pearl Biscuit) met 5 personen en u wilt graag een fotograaf maar geen extra diensten."
+- "U wilt een serie videocasts opnemen met 3 personen en u heeft montage- en editingdiensten nodig."
+
+Examples in English:
+- "You are planning a 4-hour product shoot in Amsterdam for your brand Pearl (Pearl Biscuit) with a team of five, and you would like a photographer but no additional services."
+- "You are planning to record a series of videocasts with 3 people and require montage and editing services."
+"""
+        try:
+            logger.info("Calling OpenAI to generate qualification summary...")
+            messages = [{"role": "user", "content": prompt}]
+            response = self._call_openai(messages, json_mode=False)
+            return response.strip()
+        except Exception as e:
+            logger.error(f"Error generating summary: {e}")
+            if language == "Dutch":
+                return "Bedankt voor het doorgeven van al uw wensen."
+            return "Thank you for sharing all of your preferences."
 
     def _get_faq_text(self):
         return """
