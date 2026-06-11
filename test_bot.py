@@ -381,5 +381,37 @@ class TestBotController(unittest.TestCase):
             "AJ", "+31648689297", "Client AJ (+31648689297) requested manual handover for services: website."
         )
 
+    def test_handover_to_qualifying_transition(self):
+        """
+        Verify that if a user is in HANDOVER state and requests a qualifying service,
+        the bot resets their state to QUALIFYING and begins qualifying that service.
+        """
+        # Set state to HANDOVER
+        self.mock_conv_doc["state"] = "HANDOVER"
+        self.mock_conv_doc["selected_services"] = ["website"]
+        self.mock_conv_doc["current_service"] = "website"
+        self.mock_conv_doc["answers"] = {"photostudio": {"photo_duration": "4 hours"}}
+        
+        self.controller._handle_qualification_chat = MagicMock()
+        self.controller.db.get_conversation = MagicMock(return_value={
+            **self.mock_conv_doc,
+            "state": "QUALIFYING",
+            "selected_services": ["photostudio"],
+            "current_service": "photostudio"
+        })
+        
+        self.controller.process_incoming_message("+31648689297", "AJ", "chat_id_123", "I also want to book your studio")
+        
+        # Verify db.update_conversation resets the state and clears the answers for that service
+        self.controller.db.update_conversation.assert_any_call("+31648689297", {
+            "state": "QUALIFYING",
+            "selected_services": ["photostudio"],
+            "current_service": "photostudio",
+            "answers": {},
+            "asked_closing_question": False
+        })
+        # Verify it routed to qualification flow
+        self.controller._handle_qualification_chat.assert_called_once()
+
 if __name__ == '__main__':
     unittest.main()

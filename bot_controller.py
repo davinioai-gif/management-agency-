@@ -114,6 +114,27 @@ class BotController:
         persona = conv["assigned_persona"]
         state = conv["state"]
         
+        # If in HANDOVER or COMPLETED, but user asks to book a qualifying service, transition back
+        if state in ("HANDOVER", "COMPLETED"):
+            detected = self._detect_services_in_text(message_text)
+            qual_services = [s for s in detected if s in ("podcast", "photostudio", "influencer", "events")]
+            if qual_services:
+                logger.info(f"User {phone} in state {state} requested a qualification service: {qual_services}. Resetting to QUALIFYING.")
+                primary_service = qual_services[0]
+                answers = conv.get("answers", {})
+                if primary_service in answers:
+                    del answers[primary_service]
+                self.db.update_conversation(phone, {
+                    "state": "QUALIFYING",
+                    "selected_services": qual_services,
+                    "current_service": primary_service,
+                    "answers": answers,
+                    "asked_closing_question": False
+                })
+                # Re-fetch updated conversation object
+                conv = self.db.get_conversation(phone)
+                state = "QUALIFYING"
+                
         logger.info(f"Processing message for {phone} ({name}) | State: {state} | Persona: {persona} | Msg: '{message_text}'")
         
         # Save user message to history
