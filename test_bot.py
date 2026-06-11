@@ -341,5 +341,24 @@ class TestBotController(unittest.TestCase):
         self.controller.process_incoming_message("+31648689297", "AJ", "chat_id_123", "I want to book a photo shoot please")
         self.controller.db.update_conversation.assert_any_call("+31648689297", {"language": "English"})
 
+    def test_photo_studio_negative_variations(self):
+        """
+        Verify that conversational negative variations like 'no no need' or 'nothing thanks'
+        correctly resolve to a standard package hour-specific link instead of the custom intake call.
+        """
+        self.controller.whatsapp.send_message = MagicMock()
+        self.mock_conv_doc["selected_services"] = ["photostudio"]
+        self.mock_conv_doc["current_service"] = "photostudio"
+        self.mock_conv_doc["answers"] = {
+            "photostudio": {
+                "photo_duration": "8 hours",
+                "photo_photographer": "no no need",
+                "photo_extras": "nothing thanks"
+            }
+        }
+        self.controller._send_qualified_booking_links(self.mock_conv_doc, "photostudio")
+        args, _ = self.controller.whatsapp.send_message.call_args
+        self.assertIn("https://calendly.com/bhmanagement/fotostudio-huren-480", args[1])
+
 if __name__ == '__main__':
     unittest.main()

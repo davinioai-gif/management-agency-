@@ -481,20 +481,22 @@ class BotController:
             
             negatives = ["nee", "no", "geen", "niet", "none", "skip", "not needed", "niet nodig", "n.v.t", "nvt"]
             
-            # Photographer check
+            # Photographer check: standard is renting the studio on its own.
+            # We only need a photographer if they explicitly request one.
             need_photographer = False
             if photographer:
-                if any(word in photographer for word in ["own", "alleen", "zelf", "self", "alone"]):
+                if any(word in photographer for word in ["own", "alleen", "zelf", "self", "alone", "no", "nee", "niet", "without", "zonder", "not"]):
                     need_photographer = False
-                elif any(word in photographer for word in ["photographer", "fotograaf", "yes", "ja"]):
-                    need_photographer = True
-                elif photographer not in negatives:
+                elif any(word in photographer for word in ["photographer", "fotograaf", "yes", "ja", "need", "graag"]):
                     need_photographer = True
                     
-            # Extras check
+            # Extras check: we only need extras if they explicitly request them.
             need_extras = False
-            if extras and extras not in negatives:
-                need_extras = True
+            if extras:
+                if any(word in extras for word in ["no", "nee", "niet", "nothing", "niks", "geen", "none", "thanks", "bedankt"]):
+                    need_extras = False
+                elif any(word in extras for word in ["yes", "ja", "lighting", "backdrop", "assistance", "editing", "service", "setup", "prop"]):
+                    need_extras = True
                 
             if need_photographer or need_extras:
                 photo_is_standard = False
