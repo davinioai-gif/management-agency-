@@ -459,12 +459,19 @@ class BotController:
         phone = conv["phone"]
         chat_id = conv["chat_id"]
         user_had_no_more_questions = ai_output.get("user_had_no_more_questions", False)
+        is_negative_response = ai_output.get("is_negative_response", False)
             
         # If closing question was already asked:
         lower_msg = message_text.lower()
-        no_questions_keywords = ["nee", "geen", "geen vragen", "no", "no questions", "niks", "niet", "none"]
+        no_questions_keywords = ["nee", "geen", "geen vragen", "no", "no questions", "niks", "niet", "none", "nope", "nothing", "clear", "thanks", "bedankt", "dank", "sure"]
         
-        if user_had_no_more_questions or any(kw in lower_msg for kw in no_questions_keywords):
+        has_no_questions = (
+            user_had_no_more_questions or 
+            is_negative_response or 
+            any(kw in lower_msg for kw in no_questions_keywords)
+        )
+        
+        if has_no_questions:
             # Deliver booking links
             current_service = conv.get("current_service")
             self._send_qualified_booking_links(conv, current_service)

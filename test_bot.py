@@ -413,5 +413,33 @@ class TestBotController(unittest.TestCase):
         # Verify it routed to qualification flow
         self.controller._handle_qualification_chat.assert_called_once()
 
+    def test_closing_and_delivery_scenarios(self):
+        """
+        Verify that user declining to ask questions (e.g. 'nope thanks', 'sure', 'no') 
+        properly triggers qualified link delivery, whereas asking a real question does not.
+        """
+        self.controller._send_qualified_booking_links = MagicMock()
+        self.controller.whatsapp.send_message = MagicMock()
+        
+        # Scenario A: User says "nope thanks" (negative response keywords)
+        ai_output = {
+            "user_had_no_more_questions": False,
+            "is_negative_response": True,
+            "reply": "No problem!"
+        }
+        self.controller._handle_closing_and_delivery(self.mock_conv_doc, ai_output, "nope thanks")
+        self.controller._send_qualified_booking_links.assert_called_once()
+        
+        # Scenario B: User asks a follow up question
+        self.controller._send_qualified_booking_links.reset_mock()
+        ai_output = {
+            "user_had_no_more_questions": False,
+            "is_negative_response": False,
+            "reply": "We are located in Blaricum."
+        }
+        self.controller._handle_closing_and_delivery(self.mock_conv_doc, ai_output, "where are you located?")
+        self.controller._send_qualified_booking_links.assert_not_called()
+        self.controller.whatsapp.send_message.assert_called_once_with("chat_id_123", "We are located in Blaricum.")
+
 if __name__ == '__main__':
     unittest.main()
