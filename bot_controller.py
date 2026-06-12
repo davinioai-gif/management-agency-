@@ -454,33 +454,62 @@ class BotController:
 
     def _handle_closing_and_delivery(self, conv: dict, ai_output: dict, message_text: str):
         """
-        Manages the transition to the closing question and booking link delivery.
+        Strict 2-step gate for closing:
+        Step 1: If closing question hasn't been asked yet → ask it and mark asked_closing_question=True.
+        Step 2: If closing question WAS already asked → check user's reply and send link or answer FAQ.
         """
         phone = conv["phone"]
         chat_id = conv["chat_id"]
+        lang = conv.get("language", "Dutch")
+        asked_closing_question = conv.get("asked_closing_question", False)
+
+        if not asked_closing_question:
+            # STEP 1: Ask the closing question — use the AI's reply if it contains one,
+            # otherwise fall back to a default closing message.
+            closing_reply = ai_output.get("reply", "")
+            # Ensure the reply is actually the closing question and not something else
+            closing_keywords = ["question", "vragen", "vraag", "anything else", "nog iets", "help you"]
+            is_closing_reply = any(kw in closing_reply.lower() for kw in closing_keywords)
+            
+            if not closing_reply or not is_closing_reply:
+                if lang == "Dutch":
+                    closing_reply = "Heeft u nog vragen voor mij?"
+                else:
+                    closing_reply = "Do you have any questions for me?"
+            
+            self.whatsapp.send_message(chat_id, closing_reply)
+            self.db.save_message(phone, "assistant", closing_reply)
+            self.db.update_conversation(phone, {"asked_closing_question": True})
+            return
+
+        # STEP 2: Closing question was already asked — now evaluate user's reply
         user_had_no_more_questions = ai_output.get("user_had_no_more_questions", False)
         is_negative_response = ai_output.get("is_negative_response", False)
-            
-        # If closing question was already asked:
-        lower_msg = message_text.lower()
-        no_questions_keywords = ["nee", "geen", "geen vragen", "no", "no questions", "niks", "niet", "none", "nope", "nothing", "clear", "thanks", "bedankt", "dank", "sure"]
-        
+
+        lower_msg = message_text.lower().strip()
+        no_questions_keywords = [
+            "nee", "geen", "geen vragen", "no", "no questions", "niks", "niet", "none",
+            "nope", "nothing", "clear", "thanks", "bedankt", "dank", "sure", "perfect",
+            "alright", "not at this point", "that's it", "thats it", "not really"
+        ]
+
         has_no_questions = (
-            user_had_no_more_questions or 
-            is_negative_response or 
+            user_had_no_more_questions or
+            is_negative_response or
             any(kw in lower_msg for kw in no_questions_keywords)
         )
-        
+
         if has_no_questions:
-            # Deliver booking links
+            # Deliver the booking link
             current_service = conv.get("current_service")
             self._send_qualified_booking_links(conv, current_service)
         else:
-            # The client asked some follow up question. Send AI response
-            lang = conv.get("language", "Dutch")
-            reply = ai_output.get("reply", MESSAGES[lang]["closing_retry"])
-            self.whatsapp.send_message(chat_id, reply)
-            self.db.save_message(phone, "assistant", reply)
+            # User asked a real follow-up question — answer it and wait for next reply
+            reply = ai_output.get("reply", "")
+            if reply:
+                self.whatsapp.send_message(chat_id, reply)
+                self.db.save_message(phone, "assistant", reply)
+            # Keep asked_closing_question=True so next reply still routes here
 
     def _send_qualified_booking_links(self, conv: dict, service: str = None):
         """
@@ -500,14 +529,17 @@ class BotController:
             else:
                 service = selected_services[0] if selected_services else "photostudio"
         
-        # 1. Generate the dynamic summary for this specific service
+        # 1. Generate a FULL summary covering all services the user has discussed
         all_answers = conv.get("answers", {})
+        
+        # Include all services with answers for a complete summary
+        services_for_summary = [s for s in selected_services if s in all_answers] or [service]
         
         # Track which services have already had their links delivered
         delivered_links = conv.get("booking_links_delivered", [])
         intake_already_sent = CALENDLY_INTAKE_URL in delivered_links
         
-        summary = self.ai.generate_qualification_summary([service], all_answers, lang)
+        summary = self.ai.generate_qualification_summary(services_for_summary, all_answers, lang)
         
         # Determine photostudio link dynamically
         photo_link = CALENDLY_PHOTO_URL

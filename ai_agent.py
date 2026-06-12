@@ -76,7 +76,7 @@ class AIAgent:
                 model=PRIMARY_MODEL,
                 messages=messages,
                 response_format=response_format,
-                temperature=0.3
+                temperature=0.4
             )
             return response.choices[0].message.content
         except Exception as e:
@@ -86,7 +86,7 @@ class AIAgent:
                     model=FALLBACK_MODEL,
                     messages=messages,
                     response_format=response_format,
-                    temperature=0.3
+                    temperature=0.4
                 )
                 return response.choices[0].message.content
             except Exception as fe:
@@ -221,24 +221,30 @@ You must return your output strictly in JSON format matching this schema:
 
     def generate_qualification_summary(self, selected_services: list, answers: dict, language: str) -> str:
         """
-        Generates a 1-sentence summary of the qualification answers in the target language.
+        Generates a professional summary of all qualification answers across all services discussed.
         """
         prompt = f"""
-You are a warm, professional booking assistant. Write a one-sentence summary of the client's booking details based on their qualification answers.
-Maintain a warm, polite and professional tone.
-The summary MUST be written in {language}.
+You are a warm, professional booking assistant. Write a clear and concise summary of the client's booking details based on all their qualification answers.
 
-Answers logged:
-{json.dumps(answers)}
+Rules:
+- Cover ALL services listed below in the summary (if multiple services, mention each one).
+- Keep it to 2-3 sentences maximum. Be specific — use the actual answers given.
+- Maintain a warm, polite and professional tone.
+- The summary MUST be written in {language}.
+- Write ONLY the summary. No greeting, no intro, no extra text.
 
-Write ONLY the one-sentence summary. Do not add any greeting, intro or extra text.
-Examples in Dutch:
-- "U plant een productshoot van 4 uur in Amsterdam voor uw merk Pearl (Pearl Biscuit) met 5 personen en u wilt graag een fotograaf maar geen extra diensten."
-- "U wilt een serie videocasts opnemen met 3 personen en u heeft montage- en editingdiensten nodig."
+Services discussed: {selected_services}
+All answers logged:
+{json.dumps(answers, ensure_ascii=False)}
 
-Examples in English:
-- "You are planning a 4-hour product shoot in Amsterdam for your brand Pearl (Pearl Biscuit) with a team of five, and you would like a photographer but no additional services."
-- "You are planning to record a series of videocasts with 3 people and require montage and editing services."
+Examples in Dutch (multiple services):
+- "U plant een audio-interview podcast met 4-5 personen voor volgende week, en daarnaast een model shoot van 8 uur in de fotostudio met 4-5 personen zonder fotograaf of extra diensten."
+
+Examples in English (multiple services):
+- "You are planning a single audio interview podcast with 4-5 people next weekend, and also an 8-hour model shoot in the photo studio with 4-5 people, no photographer or additional services needed."
+
+Examples in English (single service):
+- "You are planning an 8-hour product shoot for your clothing brand 'Suits Me' with a team of three, renting the studio without a photographer or additional services."
 """
         try:
             logger.info("Calling OpenAI to generate qualification summary...")
