@@ -23,7 +23,7 @@ async def flush_buffer(phone: str):
     """
     Consolidates buffered messages for a phone number and triggers chatbot processing.
     """
-    await asyncio.sleep(5.0)  # Wait for 5 seconds of silence from the user
+    await asyncio.sleep(10.0)  # Wait for 10 seconds so all rapid messages are combined
     
     async with buffer_lock:
         if phone not in message_buffers:

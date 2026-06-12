@@ -484,22 +484,29 @@ class BotController:
 
     def _send_qualified_booking_links(self, conv: dict, service: str = None):
         """
-        Sends booking links wrapped in professional explanation templates.
+        Sends the booking link for the completed service.
+        Each service gets its own link. The intake link is sent only once — if it was
+        already delivered in this conversation, it will not be resent.
         """
         phone = conv["phone"]
         chat_id = conv["chat_id"]
         lang = conv.get("language", "Dutch")
+        selected_services = conv.get("selected_services", [])
         
         if not service:
-            selected_services = conv.get("selected_services", [])
             curr = conv.get("current_service")
             if curr in selected_services:
                 service = curr
             else:
                 service = selected_services[0] if selected_services else "photostudio"
-            
-        # 1. Generate the dynamic 1-sentence summary of the user's booking details using AI
+        
+        # 1. Generate the dynamic summary for this specific service
         all_answers = conv.get("answers", {})
+        
+        # Track which services have already had their links delivered
+        delivered_links = conv.get("booking_links_delivered", [])
+        intake_already_sent = CALENDLY_INTAKE_URL in delivered_links
+        
         summary = self.ai.generate_qualification_summary([service], all_answers, lang)
         
         # Determine photostudio link dynamically
@@ -611,6 +618,18 @@ class BotController:
             links_sent = [CALENDLY_PODCAST_URL]
         else:
             # Events / Influencer / fallback to custom intake call
+            # Only send intake link if it hasn't been sent before
+            if intake_already_sent:
+                logger.info(f"Intake link already delivered to {phone}. Skipping resend for service '{service}'.")
+                completed_services = conv.get("completed_services", [])
+                if service not in completed_services:
+                    completed_services.append(service)
+                self.db.update_conversation(phone, {
+                    "state": "COMPLETED",
+                    "completed_services": completed_services,
+                    "asked_closing_question": False
+                })
+                return
             if lang == "Dutch":
                 explanation = (
                     f"{summary}\n\n"
@@ -632,11 +651,22 @@ class BotController:
         self.whatsapp.send_message(chat_id, explanation)
         self.db.save_message(phone, "assistant", explanation)
         
+        # Track delivered link and mark this service as completed
+        # Append new link to delivered list (avoid duplicates)
+        new_link = links_sent[0] if links_sent else None
+        updated_links = list(set(delivered_links + links_sent)) if new_link else delivered_links
+        
+        completed_services = conv.get("completed_services", [])
+        if service not in completed_services:
+            completed_services.append(service)
+        
         self.db.update_conversation(phone, {
             "state": "COMPLETED",
-            "booking_links_delivered": links_sent
+            "booking_links_delivered": updated_links,
+            "completed_services": completed_services,
+            "asked_closing_question": False  # Reset for next service if user switches
         })
-        logger.info(f"Qualified booking links delivered contextually to {phone}")
+        logger.info(f"Booking link for '{service}' delivered to {phone}")
 
     def _send_direct_booking_link(self, conv: dict, service: str):
         """
@@ -701,15 +731,22 @@ class BotController:
     def _handle_completed_chat(self, conv: dict, message_text: str):
         """
         Handles follow-up messages after the booking/intake link has been sent.
+        Short acknowledgements (ok, thanks, sure) are silently ignored to prevent duplicate replies.
         """
         phone = conv["phone"]
         chat_id = conv["chat_id"]
         persona = conv["assigned_persona"]
         
-        # If user schedules via Calendly, we can trigger confirmation message
-        # (This can also be invoked via a webhook from Calendly directly, but here we cover basic chat follow ups)
+        # Ignore short acknowledgements that don't need a reply
+        acknowledgements = ["ok", "okay", "thanks", "thank you", "bedankt", "dank", "sure", "great", "perfect", "alright", "got it", "👍"]
+        lower_msg = message_text.lower().strip()
+        if lower_msg in acknowledgements or len(lower_msg) <= 4:
+            logger.info(f"Ignoring short acknowledgement from {phone}: '{message_text}'")
+            return
+        
         ai_output = self.ai.analyze_and_reply(persona, conv, message_text)
         reply = ai_output.get("reply", "")
         
-        self.whatsapp.send_message(chat_id, reply)
-        self.db.save_message(phone, "assistant", reply)
+        if reply:
+            self.whatsapp.send_message(chat_id, reply)
+            self.db.save_message(phone, "assistant", reply)
