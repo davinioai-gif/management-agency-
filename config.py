@@ -19,10 +19,13 @@ UNIPILE_API_KEY = os.getenv("UNIPILE_API_KEY")
 UNIPILE_API_URL = os.getenv("UNIPILE_API_URL", "https://api.unipile.com/v1")
 UNIPILE_CHAT_ID = os.getenv("UNIPILE_CHAT_ID")  # Default sending chat/channel ID if needed
 
-# Calendly Config
+# Calendly Config — Only these links exist on Calendly:
+# - Intake call (for podcast, events, influencer, and photostudio with extras/photographer)
+# - 3 photostudio direct links based on duration (only if no photographer and no extras)
 CALENDLY_INTAKE_URL = os.getenv("CALENDLY_INTAKE_URL", "https://calendly.com/bhmanagement/intake-call-beerthuizen-management")
-CALENDLY_PHOTO_URL = os.getenv("CALENDLY_PHOTO_URL", "https://calendly.com/bhmanagement/fotostudio-huren")
-CALENDLY_PODCAST_URL = os.getenv("CALENDLY_PODCAST_URL", "https://calendly.com/bhmanagement/podcast-opnemen")
+CALENDLY_PHOTO_2H_URL = "https://calendly.com/bhmanagement/fotostudio-huren-120"
+CALENDLY_PHOTO_4H_URL = "https://calendly.com/bhmanagement/fotostudio-huren-240"
+CALENDLY_PHOTO_8H_URL = "https://calendly.com/bhmanagement/fotostudio-huren-480"
 
 # Notifications Config
 EMIRHAN_EMAIL = os.getenv("EMIRHAN_EMAIL", "emirhan@beerthuizenmanagement.nl")

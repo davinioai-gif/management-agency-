@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from openai import OpenAI
-from config import OPENAI_API_KEY, PRIMARY_MODEL, FALLBACK_MODEL, CALENDLY_INTAKE_URL, CALENDLY_PHOTO_URL, CALENDLY_PODCAST_URL
+from config import OPENAI_API_KEY, PRIMARY_MODEL, FALLBACK_MODEL, CALENDLY_INTAKE_URL
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +179,7 @@ You must return your output strictly in JSON format matching this schema:
   }},
   "is_negative_response": false, // Set to true if the user's response was a rejection/skip/refusal of the current question.
   "user_had_no_more_questions": false, // Set to true if the user indicates they have no questions (e.g., "no", "geen vragen", "nope", "nothing", "all clear", "no thanks", "nope thanks", "sure").
+  "cannot_answer": false, // Set to true ONLY if the user asked a question NOT covered by the knowledge base and you genuinely do not know the answer. Never fabricate — if unsure, set true.
   "reply": "Your response to the user here. Keep it human-like, short, and natural.",
   "asking_question_key": "the_key_of_the_question_you_are_asking_from_the_list", // e.g. "photo_duration" or null if you are not asking a qualification question.
   "detected_language": "Dutch" // "Dutch" or "English".

@@ -4,7 +4,7 @@ from mongo_handler import MongoHandler
 from ai_agent import AIAgent, QUALIFICATION_QUESTIONS, SERVICES
 from unipile_client import UnipileClient
 from notification_handler import NotificationHandler
-from config import CALENDLY_INTAKE_URL, CALENDLY_PHOTO_URL, CALENDLY_PODCAST_URL
+from config import CALENDLY_INTAKE_URL, CALENDLY_PHOTO_2H_URL, CALENDLY_PHOTO_4H_URL, CALENDLY_PHOTO_8H_URL
 
 logger = logging.getLogger(__name__)
 
@@ -293,9 +293,9 @@ class BotController:
 
         asyncio.create_task(delayed_intro())
 
-    def _trigger_handover(self, conv: dict, services_selected: list):
+    def _trigger_handover(self, conv: dict, services_selected: list, user_message: str = ""):
         """
-        Handovers conversation to manual employee (Emirhan), sends notification email.
+        Handovers conversation to manual employee (Emirhan), sends notification email + n8n webhook.
         """
         phone = conv["phone"]
         chat_id = conv["chat_id"]
@@ -329,8 +329,9 @@ class BotController:
         )
         self.notifier.send_email_notification(subject, body)
         
-        # Trigger n8n webhook notification
-        webhook_msg = f"Client {name} ({phone}) requested manual handover for services: {', '.join(services_selected)}."
+        # Trigger n8n webhook — include actual user message for better context
+        webhook_msg = user_message.strip() if user_message.strip() else \
+            f"Client {name} ({phone}) requested manual handover for services: {', '.join(services_selected)}."
         self.notifier.send_n8n_handover_webhook(name, phone, webhook_msg)
         
         logger.info(f"Handover triggered for {phone} to Emirhan and n8n webhook")
@@ -366,18 +367,32 @@ class BotController:
 
         logger.info(f"AI Output: intents={detected_intents}, asking_key={asking_question_key}, is_neg={is_negative_response}, closing_no={user_had_no_more_questions}")
 
-        # 3. Dynamic Intent Switching (expandable requirement)
-        # If the user selects a website or ads in the middle of a chat, immediately handover
-        if any(item in detected_intents for item in ["website", "ads"]):
+        # 3. Dynamic Intent Switching
+        # Check BOTH AI-detected intents AND keyword detection for website/ads
+        keyword_detected = self._detect_services_in_text(message_text)
+        all_detected = list(set(detected_intents + keyword_detected))
+        
+        # If website or ads detected at any point → trigger handover immediately
+        if any(item in all_detected for item in ["website", "ads"]):
             logger.info(f"User {phone} switched intent to website/ads during qualification. Redirecting to handover.")
-            self._trigger_handover(conv, list(set(selected_services + ["website", "ads"])))
+            all_services = list(set(selected_services + [s for s in all_detected if s in ["website", "ads"]]))
+            self._trigger_handover(conv, all_services, message_text)
             return
 
-        # Update selected services list if new ones were detected
-        updated_services = list(set(selected_services + [s for s in detected_intents if s in SERVICES]))
-        if len(updated_services) > len(selected_services):
-            self.db.update_conversation(phone, {"selected_services": updated_services})
+        # Update selected_services list if new qualifying services were detected
+        new_qualifying = [s for s in all_detected if s in SERVICES and s not in selected_services]
+        if new_qualifying:
+            updated_services = list(set(selected_services + new_qualifying))
+            # Switch current_service to the newly mentioned service
+            new_primary = new_qualifying[0]
+            logger.info(f"User {phone} added new service '{new_primary}'. Updating current_service and selected_services in DB.")
+            self.db.update_conversation(phone, {
+                "selected_services": updated_services,
+                "current_service": new_primary,
+                "asked_closing_question": False
+            })
             selected_services = updated_services
+            current_service = new_primary
 
         # 4. Handle Negative / Skip Answer (BUG #4 Fix)
         # If user explicitly declined to answer (e.g. 'no/nee/not needed'), mark the active question as 'Skipped'
@@ -541,9 +556,10 @@ class BotController:
         
         summary = self.ai.generate_qualification_summary(services_for_summary, all_answers, lang)
         
-        # Determine photostudio link dynamically
-        photo_link = CALENDLY_PHOTO_URL
-        photo_is_standard = True
+        # 2. Determine which link to send
+        # RULE: Only photostudio has specific hour-based direct links.
+        # Podcast, events, influencer → always intake link.
+        links_sent = []
         
         if service == "photostudio":
             photo_answers = all_answers.get("photostudio", {})
@@ -551,57 +567,43 @@ class BotController:
             extras = str(photo_answers.get("extras") or photo_answers.get("photo_extras") or "").lower()
             duration = str(photo_answers.get("duration") or photo_answers.get("photo_duration") or "").lower()
             
-            negatives = ["nee", "no", "geen", "niet", "none", "skip", "not needed", "niet nodig", "n.v.t", "nvt"]
+            # Photographer: standard = NO photographer
+            need_photographer = bool(photographer) and any(
+                word in photographer for word in ["photographer", "fotograaf", "yes", "ja", "need", "graag"]
+            ) and not any(
+                word in photographer for word in ["no", "nee", "niet", "without", "zonder", "not", "own", "zelf", "alone"]
+            )
             
-            # Photographer check: standard is renting the studio on its own.
-            # We only need a photographer if they explicitly request one.
-            need_photographer = False
-            if photographer:
-                if any(word in photographer for word in ["own", "alleen", "zelf", "self", "alone", "no", "nee", "niet", "without", "zonder", "not"]):
-                    need_photographer = False
-                elif any(word in photographer for word in ["photographer", "fotograaf", "yes", "ja", "need", "graag"]):
-                    need_photographer = True
-                    
-            # Extras check: we only need extras if they explicitly request them.
-            need_extras = False
-            if extras:
-                if any(word in extras for word in ["no", "nee", "niet", "nothing", "niks", "geen", "none", "thanks", "bedankt"]):
-                    need_extras = False
-                elif any(word in extras for word in ["yes", "ja", "lighting", "backdrop", "assistance", "editing", "service", "setup", "prop"]):
-                    need_extras = True
-                
-            if need_photographer or need_extras:
-                photo_is_standard = False
-                
+            # Extras: standard = NO extras
+            need_extras = bool(extras) and any(
+                word in extras for word in ["yes", "ja", "lighting", "backdrop", "assistance", "editing", "service", "setup", "prop"]
+            ) and not any(
+                word in extras for word in ["no", "nee", "niet", "nothing", "niks", "geen", "none", "thanks", "bedankt"]
+            )
+            
+            # Duration detection
+            # RULE: ONLY exactly 2h, 4h or 8h → direct booking link.
+            # Anything else (1 day, 5 days, 10 hours, etc.) → intake call.
             detected_duration = None
-            if "2" in duration and "20" not in duration and "24" not in duration:
-                detected_duration = 2
-            elif "4" in duration and "40" not in duration:
-                detected_duration = 4
-            elif "8" in duration or "dag" in duration or "day" in duration:
-                detected_duration = 8
-                
-            if not detected_duration:
-                photo_is_standard = False
-                
-            if photo_is_standard:
+            if "day" not in duration and "dag" not in duration:
+                if "2" in duration and "20" not in duration and "24" not in duration:
+                    detected_duration = 2
+                elif "4" in duration and "40" not in duration:
+                    detected_duration = 4
+                elif "8" in duration:
+                    detected_duration = 8
+            # Any mention of "day/dag" OR anything not matching 2/4/8 → detected_duration stays None → intake
+            
+            is_standard = not need_photographer and not need_extras and detected_duration is not None
+            
+            if is_standard:
                 if detected_duration == 2:
-                    photo_link = "https://calendly.com/bhmanagement/fotostudio-huren-120"
+                    photo_link = CALENDLY_PHOTO_2H_URL
                 elif detected_duration == 4:
-                    photo_link = "https://calendly.com/bhmanagement/fotostudio-huren-240"
+                    photo_link = CALENDLY_PHOTO_4H_URL
                 else:
-                    photo_link = "https://calendly.com/bhmanagement/fotostudio-huren-480"
-            else:
-                photo_link = CALENDLY_INTAKE_URL
-
-        # Format final messages following the strict template:
-        # - summary
-        # - thank you message
-        # - link
-        
-        links_sent = []
-        if service == "photostudio":
-            if photo_is_standard:
+                    photo_link = CALENDLY_PHOTO_8H_URL
+                
                 if lang == "Dutch":
                     explanation = (
                         f"{summary}\n\n"
@@ -611,71 +613,51 @@ class BotController:
                 else:
                     explanation = (
                         f"{summary}\n\n"
-                        f"Thank you for your answers. You can book a time slot directly via the link below:\n\n"
+                        f"Thank you for your answers. You can book a time slot for the photo studio directly via the link below:\n\n"
                         f"{photo_link}"
                     )
                 links_sent = [photo_link]
             else:
-                # Custom intake meeting
-                if lang == "Dutch":
-                    explanation = (
-                        f"{summary}\n\n"
-                        f"Bedankt voor uw antwoorden. We kunnen alle details verder bespreken tijdens een intakegesprek.\n"
-                        f"U kunt via deze link een tijdslot boeken.\n"
-                        f"We kijken ernaar uit om meer te horen over uw visie en deze tot leven te brengen.\n\n"
-                        f"{CALENDLY_INTAKE_URL}"
-                    )
+                # Photostudio with photographer/extras or unknown duration → intake
+                if not intake_already_sent:
+                    if lang == "Dutch":
+                        explanation = (
+                            f"{summary}\n\n"
+                            f"Bedankt voor uw antwoorden. Omdat u aanvullende wensen heeft, bespreken we de details graag in een intakegesprek.\n"
+                            f"U kunt via deze link een tijdslot boeken:\n\n"
+                            f"{CALENDLY_INTAKE_URL}"
+                        )
+                    else:
+                        explanation = (
+                            f"{summary}\n\n"
+                            f"Thank you for your answers. Since you have some specific requirements, we'd love to discuss the details in an intake call.\n"
+                            f"You can book a time slot via this link:\n\n"
+                            f"{CALENDLY_INTAKE_URL}"
+                        )
+                    links_sent = [CALENDLY_INTAKE_URL]
                 else:
-                    explanation = (
-                        f"{summary}\n\n"
-                        f"Thank you for your answers. We can discuss all the details further during an intake meeting.\n"
-                        f"You can book a time slot via this link.\n"
-                        f"We look forward to hearing more about your vision and bringing it to life.\n\n"
-                        f"{CALENDLY_INTAKE_URL}"
-                    )
-                links_sent = [CALENDLY_INTAKE_URL]
-        elif service == "podcast":
-            if lang == "Dutch":
-                explanation = (
-                    f"{summary}\n\n"
-                    f"Bedankt voor uw antwoorden. U kunt direct een tijdslot boeken via onderstaande link:\n\n"
-                    f"{CALENDLY_PODCAST_URL}"
-                )
-            else:
-                explanation = (
-                    f"{summary}\n\n"
-                    f"Thank you for your answers. You can book a time slot directly via the link below:\n\n"
-                    f"{CALENDLY_PODCAST_URL}"
-                )
-            links_sent = [CALENDLY_PODCAST_URL]
+                    logger.info(f"Intake link already delivered to {phone}. Skipping resend for photostudio.")
+                    self._mark_service_completed(phone, conv, service)
+                    return
         else:
-            # Events / Influencer / fallback to custom intake call
-            # Only send intake link if it hasn't been sent before
+            # Podcast / Events / Influencer → always intake link (only once)
             if intake_already_sent:
                 logger.info(f"Intake link already delivered to {phone}. Skipping resend for service '{service}'.")
-                completed_services = conv.get("completed_services", [])
-                if service not in completed_services:
-                    completed_services.append(service)
-                self.db.update_conversation(phone, {
-                    "state": "COMPLETED",
-                    "completed_services": completed_services,
-                    "asked_closing_question": False
-                })
+                self._mark_service_completed(phone, conv, service)
                 return
+            
             if lang == "Dutch":
                 explanation = (
                     f"{summary}\n\n"
                     f"Bedankt voor uw antwoorden. We kunnen alle details verder bespreken tijdens een intakegesprek.\n"
-                    f"U kunt via deze link een tijdslot boeken.\n"
-                    f"We kijken ernaar uit om meer te horen over uw visie en deze tot leven te brengen.\n\n"
+                    f"U kunt via deze link een tijdslot boeken:\n\n"
                     f"{CALENDLY_INTAKE_URL}"
                 )
             else:
                 explanation = (
                     f"{summary}\n\n"
-                    f"Thank you for your answers. We can discuss all the details further during an intake meeting.\n"
-                    f"You can book a time slot via this link.\n"
-                    f"We look forward to hearing more about your vision and bringing it to life.\n\n"
+                    f"Thank you for your answers. We would love to discuss all the details during an intake call.\n"
+                    f"You can book a time slot via this link:\n\n"
                     f"{CALENDLY_INTAKE_URL}"
                 )
             links_sent = [CALENDLY_INTAKE_URL]
@@ -683,11 +665,7 @@ class BotController:
         self.whatsapp.send_message(chat_id, explanation)
         self.db.save_message(phone, "assistant", explanation)
         
-        # Track delivered link and mark this service as completed
-        # Append new link to delivered list (avoid duplicates)
-        new_link = links_sent[0] if links_sent else None
-        updated_links = list(set(delivered_links + links_sent)) if new_link else delivered_links
-        
+        updated_links = list(set(delivered_links + links_sent))
         completed_services = conv.get("completed_services", [])
         if service not in completed_services:
             completed_services.append(service)
@@ -696,46 +674,44 @@ class BotController:
             "state": "COMPLETED",
             "booking_links_delivered": updated_links,
             "completed_services": completed_services,
-            "asked_closing_question": False  # Reset for next service if user switches
+            "asked_closing_question": False
         })
         logger.info(f"Booking link for '{service}' delivered to {phone}")
 
+    def _mark_service_completed(self, phone: str, conv: dict, service: str):
+        """Helper to mark a service as completed without sending a duplicate link."""
+        completed_services = conv.get("completed_services", [])
+        if service not in completed_services:
+            completed_services.append(service)
+        self.db.update_conversation(phone, {
+            "state": "COMPLETED",
+            "completed_services": completed_services,
+            "asked_closing_question": False
+        })
+
     def _send_direct_booking_link(self, conv: dict, service: str):
         """
-        Sends direct booking link immediately for Podcast/Photo Studio direct booking requests.
+        Sends direct booking link immediately for Photo Studio direct booking requests.
+        Podcast and all other services redirect to intake call.
         """
         phone = conv["phone"]
         chat_id = conv["chat_id"]
         lang = conv.get("language", "Dutch")
         
-        if service == "podcast":
-            link = CALENDLY_PODCAST_URL
-            if lang == "Dutch":
-                explanation = (
-                    f"Als ik het goed begrijp wil je direct een boeking maken voor de podcaststudio. "
-                    f"Dat kan heel makkelijk via onderstaande link:\n\n"
-                    f"{link}"
-                )
-            else:
-                explanation = (
-                    f"If I understand correctly, you want to book the podcast studio directly. "
-                    f"You can do so easily via the link below:\n\n"
-                    f"{link}"
-                )
+        # Only photostudio has a direct link — all others use intake
+        link = CALENDLY_INTAKE_URL
+        if lang == "Dutch":
+            explanation = (
+                f"Als ik het goed begrijp wil je direct de fotostudio in Blaricum boeken. "
+                f"Dat kan heel makkelijk via onderstaande link:\n\n"
+                f"{link}"
+            )
         else:
-            link = CALENDLY_PHOTO_URL
-            if lang == "Dutch":
-                explanation = (
-                    f"Als ik het goed begrijp wil je direct de fotostudio in Blaricum boeken. "
-                    f"Dat kan heel makkelijk via onderstaande link:\n\n"
-                    f"{link}"
-                )
-            else:
-                explanation = (
-                    f"If I understand correctly, you want to book the photo studio in Blaricum directly. "
-                    f"You can do so easily via the link below:\n\n"
-                    f"{link}"
-                )
+            explanation = (
+                f"If I understand correctly, you want to book the photo studio in Blaricum directly. "
+                f"You can do so easily via the link below:\n\n"
+                f"{link}"
+            )
 
         self.whatsapp.send_message(chat_id, explanation)
         self.db.save_message(phone, "assistant", explanation)
@@ -763,11 +739,13 @@ class BotController:
     def _handle_completed_chat(self, conv: dict, message_text: str):
         """
         Handles follow-up messages after the booking/intake link has been sent.
-        Short acknowledgements (ok, thanks, sure) are silently ignored to prevent duplicate replies.
+        - Short acknowledgements are silently ignored.
+        - If the AI cannot answer the user's question, send the intake link (only once).
         """
         phone = conv["phone"]
         chat_id = conv["chat_id"]
         persona = conv["assigned_persona"]
+        lang = conv.get("language", "Dutch")
         
         # Ignore short acknowledgements that don't need a reply
         acknowledgements = ["ok", "okay", "thanks", "thank you", "bedankt", "dank", "sure", "great", "perfect", "alright", "got it", "👍"]
@@ -778,6 +756,40 @@ class BotController:
         
         ai_output = self.ai.analyze_and_reply(persona, conv, message_text)
         reply = ai_output.get("reply", "")
+        cannot_answer = ai_output.get("cannot_answer", False)
+        
+        # If AI cannot answer → send intake link (only if not already sent)
+        if cannot_answer:
+            delivered_links = conv.get("booking_links_delivered", [])
+            intake_already_sent = CALENDLY_INTAKE_URL in delivered_links
+            
+            if not intake_already_sent:
+                if lang == "Dutch":
+                    intake_msg = (
+                        f"Voor verdere vragen kun je contact opnemen via onderstaande link:\n\n"
+                        f"{CALENDLY_INTAKE_URL}"
+                    )
+                else:
+                    intake_msg = (
+                        f"For any further queries, you can reach us directly via the link below:\n\n"
+                        f"{CALENDLY_INTAKE_URL}"
+                    )
+                self.whatsapp.send_message(chat_id, intake_msg)
+                self.db.save_message(phone, "assistant", intake_msg)
+                # Track that intake link has now been delivered
+                updated_links = list(set(delivered_links + [CALENDLY_INTAKE_URL]))
+                self.db.update_conversation(phone, {"booking_links_delivered": updated_links})
+                logger.info(f"Cannot-answer: Sent intake link to {phone} for unanswerable query.")
+            else:
+                # Intake already sent — just remind them
+                if lang == "Dutch":
+                    reminder = "Voor verdere vragen kun je ons bereiken via de link die we al hebben gedeeld."
+                else:
+                    reminder = "For any further queries, please use the link we already shared with you."
+                self.whatsapp.send_message(chat_id, reminder)
+                self.db.save_message(phone, "assistant", reminder)
+                logger.info(f"Cannot-answer: Intake link already sent to {phone}. Sent reminder.")
+            return
         
         if reply:
             self.whatsapp.send_message(chat_id, reply)
