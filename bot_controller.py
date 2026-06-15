@@ -425,19 +425,24 @@ class BotController:
                 answer_sub_key = asking_question_key.split('_')[-1]
                 self.db.save_service_answers(phone, current_service, {answer_sub_key: "No response (Max attempts)"})
 
-        # 7. Check if active service qualification is complete
+        # 7. CRITICAL: If closing question was already asked → go directly to closing handler.
+        # Do NOT re-run _is_service_qualification_complete — user is past that stage.
         updated_conv = self.db.get_conversation(phone)
+        if updated_conv.get("asked_closing_question", False):
+            logger.info(f"Closing question already asked for {phone}. Routing directly to closing/delivery handler.")
+            self._handle_closing_and_delivery(updated_conv, ai_output, message_text)
+            return
+
+        # 8. Check if all qualification questions are answered
         is_service_complete = self._is_service_qualification_complete(updated_conv, current_service)
         
         if is_service_complete:
             logger.info(f"Service qualification for '{current_service}' completed.")
-            # Add to completed list
             completed = updated_conv.get("completed_services", [])
             if current_service not in completed:
                 completed.append(current_service)
                 self.db.update_conversation(phone, {"completed_services": completed})
             
-            # Proceed to closing question / link delivery (BUG #1 Fix)
             self._handle_closing_and_delivery(updated_conv, ai_output, message_text)
             return
 
@@ -447,23 +452,29 @@ class BotController:
 
     def _is_service_qualification_complete(self, conv: dict, service: str) -> bool:
         """
-        Validates if all qualification questions for a service have been answered.
+        Checks if all REAL qualification questions are answered.
+        IMPORTANT: The *_questions key (closing 'any questions?') is EXCLUDED here
+        because it is handled by the asked_closing_question / _handle_closing_and_delivery flow.
         """
         if service not in QUALIFICATION_QUESTIONS:
             return True
             
         service_answers = conv.get("answers", {}).get(service, {})
-        required_questions = QUALIFICATION_QUESTIONS[service]
         
-        # Rule: Influencer Campaigns requires 1 less question (max 6 instead of 7)
+        # Only check real qualification questions — exclude the closing 'questions' key
+        required_questions = [
+            q for q in QUALIFICATION_QUESTIONS[service]
+            if q["key"].split('_')[-1] != "questions"
+        ]
+        
+        # Influencer: allow 1 skipped question out of required set
         if service == "influencer":
-            answered_count = sum(1 for q in required_questions if q["key"].split('_')[-1] in service_answers)
-            return answered_count >= 6
-            
-        # Standard: Check if all questions are answered
+            answered = sum(1 for q in required_questions if q["key"].split('_')[-1] in service_answers)
+            return answered >= len(required_questions) - 1
+        
+        # All other services: every question must be present
         for q in required_questions:
-            sub_key = q["key"].split('_')[-1]
-            if sub_key not in service_answers:
+            if q["key"].split('_')[-1] not in service_answers:
                 return False
         return True
 
