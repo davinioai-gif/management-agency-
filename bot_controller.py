@@ -124,9 +124,17 @@ class BotController:
                 answers = conv.get("answers", {})
                 if primary_service in answers:
                     del answers[primary_service]
+                completed = conv.get("completed_services", [])
+                if primary_service in completed:
+                    completed = [s for s in completed if s != primary_service]
+                
+                existing_selected = conv.get("selected_services", [])
+                updated_selected = list(set(existing_selected + qual_services))
+                
                 self.db.update_conversation(phone, {
                     "state": "QUALIFYING",
-                    "selected_services": qual_services,
+                    "selected_services": updated_selected,
+                    "completed_services": completed,
                     "current_service": primary_service,
                     "answers": answers,
                     "asked_closing_question": False
@@ -657,14 +665,26 @@ class BotController:
                             f"{CALENDLY_INTAKE_URL}"
                         )
                     links_sent = [CALENDLY_INTAKE_URL]
-                else:
+                 else:
                     logger.info(f"Intake link already delivered to {phone}. Skipping resend for photostudio.")
+                    if lang == "Dutch":
+                        reminder = "Bedankt! U kunt de eerder verzonden intake link gebruiken om contact met ons op te nemen."
+                    else:
+                        reminder = "Thank you! Please use the intake link we sent earlier to contact us."
+                    self.whatsapp.send_message(chat_id, reminder)
+                    self.db.save_message(phone, "assistant", reminder)
                     self._mark_service_completed(phone, conv, service)
                     return
         else:
             # Podcast / Events / Influencer → always intake link (only once)
             if intake_already_sent:
                 logger.info(f"Intake link already delivered to {phone}. Skipping resend for service '{service}'.")
+                if lang == "Dutch":
+                    reminder = "Bedankt! U kunt de eerder verzonden intake link gebruiken om contact met ons op te nemen."
+                else:
+                    reminder = "Thank you! Please use the intake link we sent earlier to contact us."
+                self.whatsapp.send_message(chat_id, reminder)
+                self.db.save_message(phone, "assistant", reminder)
                 self._mark_service_completed(phone, conv, service)
                 return
             
