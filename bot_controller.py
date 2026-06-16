@@ -665,7 +665,7 @@ class BotController:
                             f"{CALENDLY_INTAKE_URL}"
                         )
                     links_sent = [CALENDLY_INTAKE_URL]
-                 else:
+                else:
                     logger.info(f"Intake link already delivered to {phone}. Skipping resend for photostudio.")
                     if lang == "Dutch":
                         reminder = "Bedankt! U kunt de eerder verzonden intake link gebruiken om contact met ons op te nemen."
