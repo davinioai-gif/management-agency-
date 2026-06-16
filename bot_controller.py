@@ -180,15 +180,21 @@ class BotController:
         logger.info(f"Menu sent to {phone}")
 
     def _detect_services_in_text(self, message_text: str) -> list:
+        """
+        Keyword-based service detection. Used ONLY for website/ads handover reliability.
+        For other services, the AI's detected_intents is the primary signal.
+        Keywords must be specific enough to avoid false positives mid-conversation.
+        """
         lower_msg = message_text.lower()
         detected_services = []
-        if any(keyword in lower_msg for keyword in ["podcast", "opnemen", "episode", "aflevering", "audio", "videocast"]):
+        if any(keyword in lower_msg for keyword in ["podcast", "opnemen", "episode", "aflevering", "videocast"]):
             detected_services.append("podcast")
-        if any(keyword in lower_msg for keyword in ["foto", "studio", "huren", "fotoshoot", "shoots", "blaricum"]):
+        # Use specific photostudio keywords — 'studio' alone is too generic (e.g. 'je studio verhuurt')
+        if any(keyword in lower_msg for keyword in ["photostudio", "fotostudio", "fotoshoot", "foto studio", "shoots", "blaricum", "photo studio"]):
             detected_services.append("photostudio")
         if any(keyword in lower_msg for keyword in ["website", "site", "redesign", "ontwikkeling"]):
             detected_services.append("website")
-        if any(keyword in lower_msg for keyword in ["advertentie", "ads", "campagne", "adverteren"]):
+        if any(keyword in lower_msg for keyword in ["advertentie", "ads", "adverteren"]):
             detected_services.append("ads")
         if any(keyword in lower_msg for keyword in ["influencer", "creator", "matching", "creators"]):
             detected_services.append("influencer")
@@ -379,13 +385,14 @@ class BotController:
             self._trigger_handover(conv, all_services, message_text)
             return
 
-        # Update selected_services list if new qualifying services were detected
-        new_qualifying = [s for s in all_detected if s in SERVICES and s not in selected_services]
+        # Update selected_services AND current_service ONLY based on AI-detected intents.
+        # Keyword detection is intentionally NOT used here to avoid false positives
+        # (e.g. 'studio' in 'je studio verhuurt' should not switch current_service to photostudio).
+        new_qualifying = [s for s in detected_intents if s in SERVICES and s not in selected_services]
         if new_qualifying:
             updated_services = list(set(selected_services + new_qualifying))
-            # Switch current_service to the newly mentioned service
             new_primary = new_qualifying[0]
-            logger.info(f"User {phone} added new service '{new_primary}'. Updating current_service and selected_services in DB.")
+            logger.info(f"User {phone} added new AI-detected service '{new_primary}'. Updating current_service and selected_services in DB.")
             self.db.update_conversation(phone, {
                 "selected_services": updated_services,
                 "current_service": new_primary,
@@ -516,13 +523,17 @@ class BotController:
         no_questions_keywords = [
             "nee", "geen", "geen vragen", "no", "no questions", "niks", "niet", "none",
             "nope", "nothing", "clear", "thanks", "bedankt", "dank", "sure", "perfect",
-            "alright", "not at this point", "that's it", "thats it", "not really"
+            "alright", "not at this point", "that's it", "thats it", "not really",
+            "nou goed dan", "is goed", "top", "prima", "oke", "okay", "ok", "goed",
+            "super", "helder", "duidelijk", "geen dank", "dankje", "dank u",
+            "bedankt voor de informatie", "thanks voor de informatie", "got it",
+            "fine", "great", "awesome", "sounds good", "thank you"
         ]
 
         has_no_questions = (
             user_had_no_more_questions or
             is_negative_response or
-            any(kw in lower_msg for kw in no_questions_keywords)
+            any(kw == lower_msg or f" {kw} " in f" {lower_msg} " for kw in no_questions_keywords)
         )
 
         if has_no_questions:

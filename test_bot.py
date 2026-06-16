@@ -106,7 +106,8 @@ class TestBotController(unittest.TestCase):
         sent_text = args[1]
         
         self.assertIn("Bedankt voor uw antwoorden", sent_text)
-        self.assertIn("https://calendly.com/bhmanagement/podcast-opnemen", sent_text)
+        from config import CALENDLY_INTAKE_URL
+        self.assertIn(CALENDLY_INTAKE_URL, sent_text)
 
     def test_bug4_negative_answer_skip(self):
         """
@@ -400,7 +401,7 @@ class TestBotController(unittest.TestCase):
             "current_service": "photostudio"
         })
         
-        self.controller.process_incoming_message("+31648689297", "AJ", "chat_id_123", "I also want to book your studio")
+        self.controller.process_incoming_message("+31648689297", "AJ", "chat_id_123", "I also want to book your photostudio")
         
         # Verify db.update_conversation resets the state and clears the answers for that service
         self.controller.db.update_conversation.assert_any_call("+31648689297", {
@@ -422,6 +423,7 @@ class TestBotController(unittest.TestCase):
         self.controller.whatsapp.send_message = MagicMock()
         
         # Scenario A: User says "nope thanks" (negative response keywords)
+        self.mock_conv_doc["asked_closing_question"] = True
         ai_output = {
             "user_had_no_more_questions": False,
             "is_negative_response": True,
@@ -432,6 +434,7 @@ class TestBotController(unittest.TestCase):
         
         # Scenario B: User asks a follow up question
         self.controller._send_qualified_booking_links.reset_mock()
+        self.mock_conv_doc["asked_closing_question"] = True
         ai_output = {
             "user_had_no_more_questions": False,
             "is_negative_response": False,
