@@ -23,7 +23,7 @@ async def flush_buffer(phone: str):
     """
     Consolidates buffered messages for a phone number and triggers chatbot processing.
     """
-    await asyncio.sleep(5.0)  # Wait for 5 seconds so all rapid messages are combined
+    await asyncio.sleep(10.0)  # Wait for 10 seconds so all rapid messages are combined
     
     async with buffer_lock:
         if phone not in message_buffers:
@@ -39,7 +39,8 @@ async def flush_buffer(phone: str):
     if combined_message:
         logger.info(f"Flushing buffer for {phone}. Combined message: '{combined_message}'")
         try:
-            await asyncio.to_thread(bot.process_incoming_message, phone, name, chat_id, combined_message)
+            loop = asyncio.get_running_loop()
+            await asyncio.to_thread(bot.process_incoming_message, phone, name, chat_id, combined_message, loop)
         except Exception as e:
             logger.error(f"Error processing combined message for {phone}: {e}", exc_info=True)
 

@@ -90,12 +90,14 @@ class BotController:
         self.ai = AIAgent()
         self.whatsapp = UnipileClient()
         self.notifier = NotificationHandler()
+        self.loop = None
 
-    def process_incoming_message(self, phone: str, name: str, chat_id: str, message_text: str):
+    def process_incoming_message(self, phone: str, name: str, chat_id: str, message_text: str, loop=None):
         """
         Main entry point for processing combined incoming messages from a user.
         Runs asynchronously to support timeouts and async database operations.
         """
+        self.loop = loop
         # 1. Fetch or create conversation
         conv = self.db.get_or_create_conversation(phone, name, chat_id)
         
@@ -339,7 +341,10 @@ class BotController:
             self.db.update_conversation(phone, {"state": "QUALIFYING"})
             logger.info(f"Persona intro sent for {phone} ({persona})")
 
-        asyncio.create_task(delayed_intro())
+        if self.loop and self.loop.is_running():
+            asyncio.run_coroutine_threadsafe(delayed_intro(), self.loop)
+        else:
+            asyncio.create_task(delayed_intro())
 
     def _trigger_handover(self, conv: dict, services_selected: list, user_message: str = ""):
         """
