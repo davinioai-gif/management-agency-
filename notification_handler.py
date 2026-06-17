@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 class NotificationHandler:
     @staticmethod
-    def send_n8n_handover_webhook(name: str, phone: str, message: str) -> bool:
+    def send_n8n_handover_webhook(name: str, phone: str, message: str, services: list = None) -> bool:
         """
         Sends handover details (name, phone, message) to the configured n8n webhook URL.
         """
@@ -20,11 +20,15 @@ class NotificationHandler:
             logger.warning("[NOTIFICATION] N8N_HANDOVER_WEBHOOK_URL is not set.")
             return False
             
+        services_list = services or []
         payload = {
             "name": name,
             "phone": phone,
             "message": message,
-            "msg": message
+            "msg": message,
+            "services": services_list,
+            "is_website": "website" in services_list,
+            "is_ads": "ads" in services_list
         }
         
         try:

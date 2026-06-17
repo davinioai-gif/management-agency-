@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import json
 from mongo_handler import MongoHandler
 from ai_agent import AIAgent, QUALIFICATION_QUESTIONS, SERVICES
 from unipile_client import UnipileClient
@@ -237,17 +238,50 @@ class BotController:
         else:
             self._send_menu_message(conv)
 
+    def _detect_menu_option(self, message_text: str) -> str:
+        """
+        Attempts to detect a menu option (1 to 6) or its word equivalent
+        in a user's response. Returns the matched option string ("1"-"6") or None.
+        """
+        lower_msg = message_text.lower().strip()
+        
+        # 1. Exact match
+        if lower_msg in MENU_OPTIONS:
+            return lower_msg
+            
+        # 2. Check for standalone digits or words
+        cleaned = lower_msg
+        for char in ".,!?()[]{}":
+            cleaned = cleaned.replace(char, " ")
+        words = cleaned.split()
+        
+        digit_map = {
+            "1": "1", "one": "1", "een": "1",
+            "2": "2", "two": "2", "twee": "2",
+            "3": "3", "three": "3", "drie": "3",
+            "4": "4", "four": "4", "vier": "4",
+            "5": "5", "five": "5", "vijf": "5",
+            "6": "6", "six": "6", "zes": "6"
+        }
+        
+        for word in words:
+            if word in digit_map:
+                return digit_map[word]
+                
+        return None
+
     def _handle_menu_reply(self, conv: dict, message_text: str):
         """
         Handles replies to the welcome menu.
         """
         phone = conv["phone"]
         chat_id = conv["chat_id"]
-        clean_choice = message_text.strip()
         
-        if clean_choice in MENU_OPTIONS:
-            selected_service = MENU_OPTIONS[clean_choice]
-            logger.info(f"User {phone} selected option {clean_choice} ({selected_service})")
+        selected_option = self._detect_menu_option(message_text)
+        
+        if selected_option:
+            selected_service = MENU_OPTIONS[selected_option]
+            logger.info(f"User {phone} selected option {selected_option} ({selected_service})")
             
             if selected_service in ["website", "ads"]:
                 self._trigger_handover(conv, [selected_service])
@@ -328,25 +362,10 @@ class BotController:
             "current_service": services_selected[0] if services_selected else None
         })
         
-        # Trigger email notification to Emirhan
-        subject = f"Nieuwe handmatige overdracht: {name} ({phone})"
-        body = (
-            f"Beste Emirhan,\n\n"
-            f"Een lead is overgedragen naar jou voor handmatige opvolging.\n\n"
-            f"Details van de lead:\n"
-            f"- Naam: {name}\n"
-            f"- Telefoonnummer: {phone}\n"
-            f"- Geselecteerde services: {', '.join(services_selected)}\n\n"
-            f"Neem de chat handmatig over via WhatsApp / Unipile.\n\n"
-            f"Met vriendelijke groet,\n"
-            f"Beerthuizen Management Chatbot Engine"
-        )
-        self.notifier.send_email_notification(subject, body)
-        
         # Trigger n8n webhook — include actual user message for better context
         webhook_msg = user_message.strip() if user_message.strip() else \
             f"Client {name} ({phone}) requested manual handover for services: {', '.join(services_selected)}."
-        self.notifier.send_n8n_handover_webhook(name, phone, webhook_msg)
+        self.notifier.send_n8n_handover_webhook(name, phone, webhook_msg, services_selected)
         
         logger.info(f"Handover triggered for {phone} to Emirhan and n8n webhook")
 
@@ -392,6 +411,23 @@ class BotController:
             all_services = list(set(selected_services + [s for s in all_detected if s in ["website", "ads"]]))
             self._trigger_handover(conv, all_services, message_text)
             return
+        # Check if bot cannot answer the query
+        if ai_output.get("cannot_answer", False):
+            booking_links_delivered = conv.get("booking_links_delivered", [])
+            lang = conv.get("language", "Dutch")
+            if booking_links_delivered:
+                if lang == "Dutch":
+                    reminder = "Ik heb je de boekingslink al gestuurd. Je kunt op die link klikken om een tijdslot te reserveren en je vraag te stellen, dan bespreken we alles daar."
+                else:
+                    reminder = "I have already sent you the booking link. You can click on that link to book a slot and raise your query, and we will discuss everything there."
+                self.whatsapp.send_message(chat_id, reminder)
+                self.db.save_message(phone, "assistant", reminder)
+                logger.info(f"Cannot-answer in Qualifying: Link already sent to {phone}. Sent reminder.")
+                return
+            else:
+                logger.info(f"Cannot-answer in Qualifying: Link not yet sent to {phone}. Triggering booking link delivery.")
+                self._send_qualified_booking_links(conv, current_service)
+                return
 
         # Update selected_services AND current_service ONLY based on AI-detected intents.
         # Keyword detection is intentionally NOT used here to avoid false positives
@@ -421,24 +457,39 @@ class BotController:
                 self.db.save_service_answers(phone, current_service, {last_key.split('_')[-1]: "Skipped / Not needed"})
 
         # 5. Save Extracted Answers to database
-        if current_service and current_service in extracted_answers:
-            self.db.save_service_answers(phone, current_service, extracted_answers[current_service])
+        if current_service:
+            # Handle both nested (e.g. {"podcast": {...}}) and flat (e.g. {"type": "..."}) AI extracted answers
+            answers_to_save = {}
+            if current_service in extracted_answers:
+                answers_to_save = extracted_answers[current_service]
+            else:
+                # Top level keys excluding known service names
+                for k, v in extracted_answers.items():
+                    if k not in SERVICES:
+                        answers_to_save[k] = v
+            
+            if answers_to_save and isinstance(answers_to_save, dict):
+                cleaned_answers = {}
+                for k, v in answers_to_save.items():
+                    sub_key = k.split('_')[-1]
+                    cleaned_answers[sub_key] = v
+                self.db.save_service_answers(phone, current_service, cleaned_answers)
 
         # 6. Question attempts counter & enforcement (BUG #5 Fix)
         # Increment attempt counter for current question
         if asking_question_key:
-            self.db.increment_question_attempt(phone, asking_question_key)
+            normalized_key = asking_question_key.split('_')[-1]
+            self.db.increment_question_attempt(phone, normalized_key)
             
             # Fetch updated conversation to see total attempts
             updated_conv = self.db.get_conversation(phone)
-            attempts = updated_conv.get("question_attempts", {}).get(asking_question_key, 0)
+            attempts = updated_conv.get("question_attempts", {}).get(normalized_key, 0)
             
             # If question asked more than 2 times, forcefully skip it
             if attempts >= 2:
-                logger.warning(f"Question '{asking_question_key}' has been asked {attempts} times without clear answer. Forcing skip.")
+                logger.warning(f"Question '{normalized_key}' has been asked {attempts} times without clear answer. Forcing skip.")
                 # Save 'Skipped' in MongoDB so the AI knows it's complete and won't ask it again
-                answer_sub_key = asking_question_key.split('_')[-1]
-                self.db.save_service_answers(phone, current_service, {answer_sub_key: "No response (Max attempts)"})
+                self.db.save_service_answers(phone, current_service, {normalized_key: "No response (Max attempts)"})
 
         # 7. CRITICAL: If closing question was already asked → go directly to closing handler.
         # Do NOT re-run _is_service_qualification_complete — user is past that stage.
@@ -450,7 +501,7 @@ class BotController:
 
         # 8. Check if all qualification questions are answered
         is_service_complete = self._is_service_qualification_complete(updated_conv, current_service)
-        ai_initiated_closing = bool(asking_question_key and asking_question_key.endswith("_questions"))
+        ai_initiated_closing = bool(asking_question_key and asking_question_key.endswith("questions"))
         
         if is_service_complete or ai_initiated_closing:
             logger.info(f"Service qualification for '{current_service}' completed (AI initiated closing: {ai_initiated_closing}).")
@@ -485,14 +536,10 @@ class BotController:
             if q["key"].split('_')[-1] != "questions"
         ]
         
-        # Influencer: allow 1 skipped question out of required set
-        if service == "influencer":
-            answered = sum(1 for q in required_questions if q["key"].split('_')[-1] in service_answers)
-            return answered >= len(required_questions) - 1
-        
-        # All other services: every question must be present
+        # All services: every question must be present in the answers database
         for q in required_questions:
-            if q["key"].split('_')[-1] not in service_answers:
+            key_suffix = q["key"].split('_')[-1]
+            if key_suffix not in service_answers:
                 return False
         return True
 
@@ -600,18 +647,32 @@ class BotController:
             extras = str(photo_answers.get("extras") or photo_answers.get("photo_extras") or "").lower()
             duration = str(photo_answers.get("duration") or photo_answers.get("photo_duration") or "").lower()
             
+            def has_keyword(text: str, keywords: list) -> bool:
+                if not text:
+                    return False
+                text_clean = f" {text.lower().strip()} "
+                for char in ".,!?()[]{}":
+                    text_clean = text_clean.replace(char, " ")
+                text_clean = " ".join(text_clean.split())
+                text_clean = f" {text_clean} "
+                
+                for kw in keywords:
+                    if f" {kw.lower().strip()} " in text_clean:
+                        return True
+                return False
+
             # Photographer: standard = NO photographer
-            need_photographer = bool(photographer) and any(
-                word in photographer for word in ["photographer", "fotograaf", "yes", "ja", "need", "graag"]
-            ) and not any(
-                word in photographer for word in ["no", "nee", "niet", "without", "zonder", "not", "own", "zelf", "alone"]
+            need_photographer = bool(photographer) and has_keyword(
+                photographer, ["photographer", "fotograaf", "yes", "ja", "need", "graag"]
+            ) and not has_keyword(
+                photographer, ["no", "nee", "niet", "without", "zonder", "not", "own", "zelf", "alone"]
             )
             
             # Extras: standard = NO extras
-            need_extras = bool(extras) and any(
-                word in extras for word in ["yes", "ja", "lighting", "backdrop", "assistance", "editing", "service", "setup", "prop"]
-            ) and not any(
-                word in extras for word in ["no", "nee", "niet", "nothing", "niks", "geen", "none", "thanks", "bedankt"]
+            need_extras = bool(extras) and has_keyword(
+                extras, ["yes", "ja", "lighting", "backdrop", "assistance", "editing", "service", "setup", "prop"]
+            ) and not has_keyword(
+                extras, ["no", "nee", "niet", "nothing", "niks", "geen", "none", "thanks", "bedankt"]
             )
             
             # Duration detection
@@ -806,9 +867,9 @@ class BotController:
         # If AI cannot answer → send intake link (only if not already sent)
         if cannot_answer:
             delivered_links = conv.get("booking_links_delivered", [])
-            intake_already_sent = CALENDLY_INTAKE_URL in delivered_links
+            has_sent_link = bool(delivered_links)
             
-            if not intake_already_sent:
+            if not has_sent_link:
                 if lang == "Dutch":
                     intake_msg = (
                         f"Voor verdere vragen kun je contact opnemen via onderstaande link:\n\n"
@@ -826,14 +887,14 @@ class BotController:
                 self.db.update_conversation(phone, {"booking_links_delivered": updated_links})
                 logger.info(f"Cannot-answer: Sent intake link to {phone} for unanswerable query.")
             else:
-                # Intake already sent — just remind them
+                # Link already sent — just remind them
                 if lang == "Dutch":
-                    reminder = "Voor verdere vragen kun je ons bereiken via de link die we al hebben gedeeld."
+                    reminder = "Ik heb je de boekingslink al gestuurd. Je kunt op die link klikken om een tijdslot te reserveren en je vraag te stellen, dan bespreken we alles daar."
                 else:
-                    reminder = "For any further queries, please use the link we already shared with you."
+                    reminder = "I have already sent you the booking link. You can click on that link to book a slot and raise your query, and we will discuss everything there."
                 self.whatsapp.send_message(chat_id, reminder)
                 self.db.save_message(phone, "assistant", reminder)
-                logger.info(f"Cannot-answer: Intake link already sent to {phone}. Sent reminder.")
+                logger.info(f"Cannot-answer: Link already sent to {phone}. Sent reminder.")
             return
         
         if reply:
