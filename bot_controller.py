@@ -450,14 +450,17 @@ class BotController:
 
         # 8. Check if all qualification questions are answered
         is_service_complete = self._is_service_qualification_complete(updated_conv, current_service)
+        ai_initiated_closing = bool(asking_question_key and asking_question_key.endswith("_questions"))
         
-        if is_service_complete:
-            logger.info(f"Service qualification for '{current_service}' completed.")
+        if is_service_complete or ai_initiated_closing:
+            logger.info(f"Service qualification for '{current_service}' completed (AI initiated closing: {ai_initiated_closing}).")
             completed = updated_conv.get("completed_services", [])
             if current_service not in completed:
                 completed.append(current_service)
                 self.db.update_conversation(phone, {"completed_services": completed})
             
+            # Re-fetch updated conv to ensure any updates are captured
+            updated_conv = self.db.get_conversation(phone)
             self._handle_closing_and_delivery(updated_conv, ai_output, message_text)
             return
 
