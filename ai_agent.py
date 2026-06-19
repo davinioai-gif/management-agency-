@@ -64,6 +64,33 @@ class AIAgent:
             logger.error("OPENAI_API_KEY is not configured.")
         self.client = OpenAI(api_key=OPENAI_API_KEY)
 
+    def detect_language(self, message_text: str) -> str:
+        """
+        Uses LLM to detect if the message is in Dutch or English, or neutral.
+        Returns 'Dutch', 'English', or 'neutral'.
+        """
+        if len(message_text.strip()) <= 2:
+            return "neutral"
+            
+        try:
+            prompt = (
+                "You are a language detection utility. Analyze the following text and determine if the language is Dutch or English.\n"
+                "If the text is neutral (like just numbers, a single name, emojis, or punctuation), return 'neutral'.\n"
+                "Respond with ONLY a JSON object containing the key 'language' with the value 'Dutch', 'English', or 'neutral'.\n"
+                "Example:\n"
+                "{\n  \"language\": \"Dutch\"\n}\n\n"
+                f"Text to analyze: \"{message_text}\""
+            )
+            messages = [{"role": "user", "content": prompt}]
+            content = self._call_openai(messages, json_mode=True)
+            res = json.loads(content)
+            detected = res.get("language")
+            if detected in ("Dutch", "English", "neutral"):
+                return detected
+        except Exception as e:
+            logger.error(f"Error in LLM language detection: {e}")
+        return "neutral"
+
     def _call_openai(self, messages, json_mode=True):
         """
         Calls OpenAI API with fallback mechanism (BUG Safeguard).

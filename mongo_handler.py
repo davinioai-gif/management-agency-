@@ -55,6 +55,7 @@ class MongoHandler:
                 "messages": [],
                 "asked_closing_question": False,
                 "completed_services": [],
+                "language": "Dutch",
                 "created_at": datetime.utcnow(),
                 "last_interaction": datetime.utcnow()
             }
@@ -66,14 +67,55 @@ class MongoHandler:
             logger.error(f"Error creating conversation: {e}")
             return None
 
+    def reset_conversation(self, phone: str):
+        """
+        Resets conversation state to NEW and clears selected/completed services, answers, and messages.
+        """
+        try:
+            self.collection.update_one(
+                {"phone": phone},
+                {
+                    "$set": {
+                        "state": "NEW",
+                        "selected_services": [],
+                        "current_service": None,
+                        "answers": {},
+                        "question_attempts": {},
+                        "messages": [],
+                        "asked_closing_question": False,
+                        "completed_services": [],
+                        "last_interaction": datetime.utcnow()
+                    }
+                }
+            )
+            logger.info(f"Reset conversation state to NEW for {phone}")
+        except Exception as e:
+            logger.error(f"Error resetting conversation for {phone}: {e}")
+
     def get_or_create_conversation(self, phone: str, name: str, chat_id: str):
         """
         Retrieves the conversation, or creates one if it doesn't exist.
+        Resets conversation to NEW if the last interaction was more than 24 hours ago.
         """
         conv = self.get_conversation(phone)
         if not conv:
             conv = self.create_conversation(phone, name, chat_id)
         else:
+            # Check 24 hour inactivity reset
+            last_interaction = conv.get("last_interaction")
+            if last_interaction:
+                if isinstance(last_interaction, str):
+                    try:
+                        last_interaction = datetime.fromisoformat(last_interaction)
+                    except ValueError:
+                        last_interaction = datetime.utcnow()
+                
+                delta = datetime.utcnow() - last_interaction
+                if delta.total_seconds() > 24 * 3600:
+                    logger.info(f"Resetting conversation for {phone} due to inactivity of > 24 hours")
+                    self.reset_conversation(phone)
+                    conv = self.get_conversation(phone)
+            
             # Update the chat_id in case it changed
             if conv.get("chat_id") != chat_id:
                 self.update_conversation(phone, {"chat_id": chat_id})

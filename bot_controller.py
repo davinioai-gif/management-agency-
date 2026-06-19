@@ -101,16 +101,15 @@ class BotController:
         # 1. Fetch or create conversation
         conv = self.db.get_or_create_conversation(phone, name, chat_id)
         
-        # Detect/set initial language if not set yet
+        # Dynamically detect/set language using LLM
         lang = conv.get("language")
+        detected_lang = self.ai.detect_language(message_text)
         if not lang:
-            dutch_words = ["ik", "wil", "huren", "opnemen", "ja", "nee", "geen", "fotoshoot", "maken", "evenement", "laten", "de", "het", "een", "en", "van", "voor", "je", "u", "we", "hallo"]
-            text_lower = message_text.lower()
-            dutch_count = sum(1 for word in dutch_words if f" {word} " in f" {text_lower} " or text_lower.startswith(word) or text_lower.endswith(word))
-            if dutch_count > 0:
-                lang = "Dutch"
-            else:
-                lang = "English"
+            lang = detected_lang if detected_lang != "neutral" else "Dutch"
+            self.db.update_conversation(phone, {"language": lang})
+            conv["language"] = lang
+        elif detected_lang != "neutral" and detected_lang != lang:
+            lang = detected_lang
             self.db.update_conversation(phone, {"language": lang})
             conv["language"] = lang
             
@@ -247,8 +246,8 @@ class BotController:
         """
         lower_msg = message_text.lower().strip()
         
-        # 1. Exact match
-        if lower_msg in MENU_OPTIONS:
+        # 1. Exact match digits or option keys
+        if lower_msg in ["1", "2", "3", "4", "5", "6"]:
             return lower_msg
             
         # 2. Check for standalone digits or words
@@ -257,8 +256,9 @@ class BotController:
             cleaned = cleaned.replace(char, " ")
         words = cleaned.split()
         
+        # Note: We exclude "een" as it is the Dutch article "a/an" and causes false positives.
         digit_map = {
-            "1": "1", "one": "1", "een": "1",
+            "1": "1", "one": "1", "één": "1",
             "2": "2", "two": "2", "twee": "2",
             "3": "3", "three": "3", "drie": "3",
             "4": "4", "four": "4", "vier": "4",
@@ -266,10 +266,23 @@ class BotController:
             "6": "6", "six": "6", "zes": "6"
         }
         
-        for word in words:
+        # Single word option choice
+        if len(words) == 1 and words[0] in digit_map:
+            return digit_map[words[0]]
+            
+        # Multiple words: only match if digits/words are accompanied by indicators or part of a very short selection sentence
+        option_indicators = ["option", "optie", "number", "nummer", "keuze", "choice", "kies", "choose"]
+        for i, word in enumerate(words):
             if word in digit_map:
-                return digit_map[word]
-                
+                if word in ["1", "2", "3", "4", "5", "6"]:
+                    if i > 0 and words[i-1] in option_indicators:
+                        return digit_map[word]
+                    if len(words) <= 3:
+                        return digit_map[word]
+                else:
+                    if i > 0 and words[i-1] in option_indicators:
+                        return digit_map[word]
+                    
         return None
 
     def _handle_menu_reply(self, conv: dict, message_text: str):
@@ -279,8 +292,24 @@ class BotController:
         phone = conv["phone"]
         chat_id = conv["chat_id"]
         
+        # 1. First prioritize direct keyword service detection
+        detected_services = self._detect_services_in_text(message_text)
+        if detected_services:
+            logger.info(f"Direct intent detected in menu reply for {phone}: {detected_services}")
+            if "website" in detected_services or "ads" in detected_services:
+                self._trigger_handover(conv, detected_services)
+            else:
+                primary_service = detected_services[0]
+                self.db.update_conversation(phone, {
+                    "selected_services": detected_services,
+                    "current_service": primary_service
+                })
+                conv = self.db.get_conversation(phone)
+                self._transfer_to_persona(conv, primary_service)
+            return
+
+        # 2. Otherwise fall back to detecting menu option numbers/words
         selected_option = self._detect_menu_option(message_text)
-        
         if selected_option:
             selected_service = MENU_OPTIONS[selected_option]
             logger.info(f"User {phone} selected option {selected_option} ({selected_service})")
@@ -295,26 +324,11 @@ class BotController:
                 conv = self.db.get_conversation(phone)
                 self._transfer_to_persona(conv, selected_service)
         else:
-            # Check if user wrote a sentence mentioning one of the services
-            detected_services = self._detect_services_in_text(message_text)
-            if detected_services:
-                logger.info(f"Direct intent detected in menu reply for {phone}: {detected_services}")
-                if "website" in detected_services or "ads" in detected_services:
-                    self._trigger_handover(conv, detected_services)
-                else:
-                    primary_service = detected_services[0]
-                    self.db.update_conversation(phone, {
-                        "selected_services": detected_services,
-                        "current_service": primary_service
-                    })
-                    conv = self.db.get_conversation(phone)
-                    self._transfer_to_persona(conv, primary_service)
-            else:
-                # Invalid selection retry
-                lang = conv.get("language", "Dutch")
-                retry_text = MESSAGES[lang]["retry_text"]
-                self.whatsapp.send_message(chat_id, retry_text)
-                self.db.save_message(phone, "assistant", retry_text)
+            # Invalid selection retry
+            lang = conv.get("language", "Dutch")
+            retry_text = MESSAGES[lang]["retry_text"]
+            self.whatsapp.send_message(chat_id, retry_text)
+            self.db.save_message(phone, "assistant", retry_text)
 
     def _transfer_to_persona(self, conv: dict, service: str):
         """
