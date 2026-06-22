@@ -148,12 +148,12 @@ class AIAgent:
             closing_phase_instruction = """
 8. CLOSING PHASE ACTIVE:
    - The final closing question ("Do you have any questions for me?") was already sent to the user.
-   - If the user asks a question (e.g. about pricing, packages, or location):
-     * Answer their question clearly and concisely using the FAQs.
-     * Do NOT ask any new open-ended or conversational questions (such as "Would you like to know more about the packages?" or "Are you interested in other options?").
+   - If the user asks a question (e.g. about parking, pricing, packages, or location):
+     * Acknowledge the user's question first, and then answer it clearly and concisely using the FAQs.
+     * Do NOT ask any new open-ended or conversational questions.
      * Keep the reply informational and direct.
      * Set "asking_question_key" to null in the JSON response.
-   - If the user does NOT ask a new question (e.g., they say "okay", "alright", "clear", "is goed", "nou goed dan", "fine", "great", "thanks", "bedankt", or show any acknowledgement/agreement/neutral response), you MUST set "user_had_no_more_questions" to true.
+   - If the user does NOT ask a new question (e.g., they say "no", "geen", "geen vragen", "nee", "nee bedankt", "niks", "niet", "none", "nope", "nothing", "okay", "alright", "clear", "is goed", "top", "prima", "oke", "goed", "super", "helder", "duidelijk", "dankje", "dank u", "thank you", "thanks", "bedankt", or any other acknowledgement, agreement, refusal, or neutral response), you MUST set "user_had_no_more_questions" to true.
 """
 
         prompt = f"""
@@ -266,12 +266,13 @@ You must return your output strictly in JSON format matching this schema:
         Generates a professional summary of all qualification answers across all services discussed.
         """
         prompt = f"""
-You are a warm, professional booking assistant. Write a clear, detailed, and comprehensive summary of all the client's booking details and preferences based on all their qualification answers gathered during the conversation.
+You are a warm, professional booking assistant. Write a clear, proper, and detailed summary of the client's booking preferences based ONLY on the actual qualification answers they provided in the chat.
 
 Rules:
 - Cover ALL services listed below in the summary (if multiple services, mention each one).
-- Provide a detailed, structured, and comprehensive overview of all answers, requirements, and context. Do NOT limit it to 2-3 sentences. Ensure the client has a full and proper context of the entire conversation.
-- Maintain a warm, polite and professional tone.
+- Only summarize the actual details, answers, and facts provided by the client. Do NOT invent, assume, or add any fictional details.
+- Do NOT include any meta-commentary, skipped questions, or negative assumptions (do NOT write "the project section was skipped", "there are no details for photographer", "no other questions were asked", "they do not need editing", or "this was not mentioned").
+- Ensure the summary reads naturally and professionally.
 - The summary MUST be written in {language}.
 - Write ONLY the summary. No greeting, no intro, no extra text.
 
@@ -280,10 +281,10 @@ All answers logged:
 {json.dumps(answers, ensure_ascii=False)}
 
 Examples in Dutch:
-- "U wilt een podcast opnemen. Het betreft een interviewpodcast om startups te motiveren, die u samen met een vriend zult presenteren. Er zullen in totaal 4-5 personen deelnemen aan de opname. De opname moet zowel audio als video bevatten. Er is nog geen specifieke datum vastgesteld, dit laat u later nog weten. U heeft geen interesse in montage of extra editing services en u heeft al ervaring met het opnemen van podcasts."
+- "U wilt een podcast opnemen. Het betreft een interviewpodcast die u samen met een vriend zult presenteren. Er zullen in totaal 4-5 personen deelnemen aan de opname. De opname zal zowel audio als video bevatten. U heeft al 3 jaar ervaring met het opnemen van podcasts."
 
 Examples in English:
-- "You would like to rent the photo studio. The shoot is a product photo session for your brand 'Suits Me' with a team of three. You plan to rent the studio for a duration of 4 hours. You do not need a photographer or additional services/extras (such as lighting, backdrops, styling, or editing). You also have no further questions at this moment."
+- "You would like to rent the photo studio. The shoot is a product photo session for your brand 'Suits Me' with a team of three. You plan to rent the studio for a duration of 4 hours."
 """
         try:
             logger.info("Calling OpenAI to generate qualification summary...")

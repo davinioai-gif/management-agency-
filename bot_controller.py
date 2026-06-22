@@ -636,6 +636,8 @@ class BotController:
             keyword_matched
         )
 
+        logger.info(f"Closing phase evaluation for {phone}: user_had_no_more_questions={user_had_no_more_questions}, is_negative_response={is_negative_response}, keyword_matched={keyword_matched} -> has_no_questions={has_no_questions}")
+
         if has_no_questions:
             # Deliver the booking link
             current_service = conv.get("current_service")
