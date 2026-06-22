@@ -420,16 +420,17 @@ class BotController:
         logger.info(f"AI Output: intents={detected_intents}, asking_key={asking_question_key}, is_neg={is_negative_response}, closing_no={user_had_no_more_questions}")
 
         # 3. Dynamic Intent Switching
-        # Check BOTH AI-detected intents AND keyword detection for website/ads
+        # For handover services (website/ads), we ONLY switch mid-qualification if explicitly detected via robust keyword matching
+        # to avoid false positive digit matches (like "4 in totaal" triggering "ads" handover).
         keyword_detected = self._detect_services_in_text(message_text)
-        all_detected = list(set(detected_intents + keyword_detected))
         
-        # If website or ads detected at any point → trigger handover immediately
-        if any(item in all_detected for item in ["website", "ads"]):
+        # If website or ads detected via keyword at any point → trigger handover immediately
+        if any(item in keyword_detected for item in ["website", "ads"]):
             logger.info(f"User {phone} switched intent to website/ads during qualification. Redirecting to handover.")
-            all_services = list(set(selected_services + [s for s in all_detected if s in ["website", "ads"]]))
+            all_services = list(set(selected_services + [s for s in keyword_detected if s in ["website", "ads"]]))
             self._trigger_handover(conv, all_services, message_text)
             return
+
         # Check if bot cannot answer the query
         if ai_output.get("cannot_answer", False):
             booking_links_delivered = conv.get("booking_links_delivered", [])
@@ -449,9 +450,10 @@ class BotController:
                 return
 
         # Update selected_services AND current_service ONLY based on AI-detected intents.
-        # Keyword detection is intentionally NOT used here to avoid false positives
-        # (e.g. 'studio' in 'je studio verhuurt' should not switch current_service to photostudio).
-        new_qualifying = [s for s in detected_intents if s in SERVICES and s not in selected_services]
+        # We only allow switching to qualifying services (podcast, photostudio, influencer, events)
+        # to prevent manual handover services (website, ads) from being set as the active qualifying service.
+        # Keyword detection is intentionally NOT used here to avoid false positives.
+        new_qualifying = [s for s in detected_intents if s in ["podcast", "photostudio", "influencer", "events"] and s not in selected_services]
         if new_qualifying:
             updated_services = list(set(selected_services + new_qualifying))
             new_primary = new_qualifying[0]
