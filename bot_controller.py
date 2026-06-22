@@ -598,7 +598,12 @@ class BotController:
         user_had_no_more_questions = ai_output.get("user_had_no_more_questions", False)
         is_negative_response = ai_output.get("is_negative_response", False)
 
-        lower_msg = message_text.lower().strip()
+        # Clean the message text for robust word-by-word keyword checking
+        cleaned_msg = message_text.lower().strip()
+        for char in ".,!?()[]{}":
+            cleaned_msg = cleaned_msg.replace(char, " ")
+        words = cleaned_msg.split()
+
         no_questions_keywords = [
             "nee", "geen", "geen vragen", "no", "no questions", "niks", "niet", "none",
             "nope", "nothing", "clear", "thanks", "bedankt", "dank", "sure", "perfect",
@@ -609,10 +614,26 @@ class BotController:
             "fine", "great", "awesome", "sounds good", "thank you"
         ]
 
+        keyword_matched = False
+        for kw in no_questions_keywords:
+            kw_clean = kw.lower().strip()
+            if " " in kw_clean:
+                # Phrase match with padded spaces for word boundaries
+                padded_msg = " " + " ".join(words) + " "
+                padded_kw = " " + kw_clean + " "
+                if padded_kw in padded_msg:
+                    keyword_matched = True
+                    break
+            else:
+                # Single word exact match
+                if kw_clean in words:
+                    keyword_matched = True
+                    break
+
         has_no_questions = (
             user_had_no_more_questions or
             is_negative_response or
-            any(kw == lower_msg or f" {kw} " in f" {lower_msg} " for kw in no_questions_keywords)
+            keyword_matched
         )
 
         if has_no_questions:
